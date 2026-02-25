@@ -1,3 +1,7 @@
+//! Arcane - Copyright (C) Navid Momtahen 2026
+//!
+//! License: GPL-3.0-only
+
 use arcane::engine::Database;
 use clap::{Parser, Subcommand};
 use std::io::{self, BufRead, Write};

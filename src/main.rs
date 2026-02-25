@@ -1,3 +1,7 @@
+//! Arcane - Copyright (C) Navid Momtahen 2026
+//!
+//! License: GPL-3.0-only
+
 use arcane::server;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;

@@ -1,3 +1,7 @@
+//! Arcane - Copyright (C) Navid Momtahen 2026
+//!
+//! License: GPL-3.0-only
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -18,7 +22,11 @@ pub enum ArcaneError {
     UnknownField(String),
 
     #[error("Type error: field '{field}' expects {expected}, got {got}")]
-    TypeError { field: String, expected: String, got: String },
+    TypeError {
+        field: String,
+        expected: String,
+        got: String,
+    },
 
     #[error("Parse error at position {pos}: {msg}")]
     ParseError { pos: usize, msg: String },

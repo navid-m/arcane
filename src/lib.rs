@@ -1,8 +1,6 @@
 //! Arcane - Copyright (C) Navid Momtahen 2026
 //!
-//! A high-performance, hash-bucketed database engine designed for extreme throughput
-//! on concurrent reads and writes. Arcane can be embedded as a library (like SQLite)
-//! or run as a standalone server.
+//! License: GPL-3.0-only
 
 pub mod engine;
 pub mod error;
