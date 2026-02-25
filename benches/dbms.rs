@@ -74,7 +74,6 @@ fn bench_insert_positional(c: &mut Criterion) {
             &size,
             |b, &sz| {
                 let (db, _dir) = setup_db_with_bucket("create bucket Bench (data: string)");
-
                 b.iter(|| {
                     let data = random_string(sz);
                     db.execute(&format!("insert into Bench (\"{}\")", data))
