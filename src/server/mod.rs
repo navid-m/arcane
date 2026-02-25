@@ -47,5 +47,6 @@ async fn handle_connection(mut stream: TcpStream, db: Arc<Database>) -> std::io:
         }
         writer.flush().await?;
     }
+
     Ok(())
 }
