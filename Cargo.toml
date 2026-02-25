@@ -35,6 +35,15 @@ crc32fast = "1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+tempfile = "3"
+
+[[bench]]
+name = "dbms"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = "fat"
