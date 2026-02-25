@@ -1,6 +1,4 @@
-# Arcane example script — run with: arcc run examples/demo.arc
-
-# Create a bucket with a schema
+# Run with: arcc run examples/demo.arc
 
 create forced unique bucket Names (first_name: string, last_name: string);
 truncate Names;
@@ -25,13 +23,13 @@ get * from Names where first_name = "Alice";
 # Get hashes for all Alices
 get __hash__ from Names where first_name = "Alice";
 
-# Create another bucket
 create forced unique bucket Products (name: string, price: float, in_stock: bool);
 truncate Products;
 
 insert into Products (name: "Widget", price: 9.99, in_stock: true);
 insert into Products (name: "Gadget", price: 24.99, in_stock: false);
 insert into Products (name: "Doohickey", price: 4.49, in_stock: true);
+
 delete from Products where name = "Doohickey";
 
 get * from Products;
