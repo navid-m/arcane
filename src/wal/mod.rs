@@ -177,7 +177,6 @@ impl Wal {
                 Ok(t) => t,
                 Err(_) => break,
             };
-
             let computed = Self::crc(seq, ty_byte, &payload);
 
             if computed != stored_crc {
