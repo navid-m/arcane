@@ -1,10 +1,12 @@
 //! AQL — Arcane Query Language Parser.
 //!
-//! statement     ::= create_bucket | insert | get
+//! statement     ::= create_bucket | insert | batch_insert | bulk | get
 //! create_bucket ::= "create" "bucket" IDENT "(" field_def ("," field_def)* ")"
 //! field_def     ::= IDENT ":" type
 //! type          ::= "string" | "int" | "float" | "bool" | "bytes"
 //! insert        ::= "insert" "into" IDENT "(" value_list ")"
+//! batch_insert  ::= "insert" "into" IDENT "(" "[" value_list "]" ("," "[" value_list "]")* ")"
+//! bulk          ::= "bulk" "{" statement* "}"
 //! value_list    ::= named_value_list | positional_value_list
 //! named_value   ::= IDENT ":" literal
 //! positional    ::= literal
@@ -26,6 +28,13 @@ pub enum Statement {
     Insert {
         bucket: String,
         values: Vec<(Option<String>, Value)>,
+    },
+    BatchInsert {
+        bucket: String,
+        rows: Vec<Vec<(Option<String>, Value)>>,
+    },
+    Bulk {
+        statements: Vec<Statement>,
     },
     Get {
         bucket: String,
@@ -61,6 +70,10 @@ pub enum Token {
     Colon,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
     Eq,
     Eof,
 }
@@ -179,6 +192,10 @@ impl<'a> Lexer<'a> {
             Some(':') => Ok(Token::Colon),
             Some('(') => Ok(Token::LParen),
             Some(')') => Ok(Token::RParen),
+            Some('[') => Ok(Token::LBracket),
+            Some(']') => Ok(Token::RBracket),
+            Some('{') => Ok(Token::LBrace),
+            Some('}') => Ok(Token::RBrace),
             Some('=') => Ok(Token::Eq),
             Some(c) if c.is_ascii_digit() || c == '-' => Ok(self.read_number(c)),
             Some(c) if c.is_alphabetic() || c == '_' => Ok(self.read_ident(c)),
@@ -309,8 +326,14 @@ impl Parser {
                 msg: format!("Expected 'into', got '{}'", kw),
             });
         }
+
         let bucket = self.expect_ident()?;
         self.expect_token(&Token::LParen)?;
+
+        if self.peek() == &Token::LBracket {
+            return self.parse_batch_insert_rows(bucket);
+        }
+
         let mut values: Vec<(Option<String>, Value)> = Vec::new();
 
         loop {
@@ -340,6 +363,79 @@ impl Parser {
         }
         self.expect_token(&Token::RParen)?;
         Ok(Statement::Insert { bucket, values })
+    }
+
+    fn parse_batch_insert_rows(&mut self, bucket: String) -> Result<Statement> {
+        let mut rows = Vec::new();
+
+        loop {
+            if self.peek() == &Token::RParen {
+                break;
+            }
+
+            self.expect_token(&Token::LBracket)?;
+            let mut values: Vec<(Option<String>, Value)> = Vec::new();
+
+            loop {
+                if self.peek() == &Token::RBracket {
+                    break;
+                }
+
+                let named = matches!(
+                    (self.tokens.get(self.pos), self.tokens.get(self.pos + 1)),
+                    (Some(Token::Ident(_)), Some(Token::Colon))
+                );
+
+                if named {
+                    let field_name = self.expect_ident()?;
+                    self.expect_token(&Token::Colon)?;
+                    let val = self.parse_literal()?;
+                    values.push((Some(field_name), val));
+                } else {
+                    let val = self.parse_literal()?;
+                    values.push((None, val));
+                }
+
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+
+            self.expect_token(&Token::RBracket)?;
+            rows.push(values);
+
+            if self.peek() == &Token::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        self.expect_token(&Token::RParen)?;
+        Ok(Statement::BatchInsert { bucket, rows })
+    }
+
+    fn parse_bulk(&mut self) -> Result<Statement> {
+        self.expect_token(&Token::LBrace)?;
+        let mut statements = Vec::new();
+
+        loop {
+            if self.peek() == &Token::RBrace {
+                break;
+            }
+            if self.peek() == &Token::Eof {
+                return Err(ArcaneError::ParseError {
+                    pos: self.pos,
+                    msg: "Unexpected EOF in bulk block".into(),
+                });
+            }
+            statements.push(self.parse_statement()?);
+        }
+
+        self.expect_token(&Token::RBrace)?;
+        Ok(Statement::Bulk { statements })
     }
 
     fn parse_get(&mut self) -> Result<Statement> {
@@ -434,6 +530,7 @@ impl Parser {
                 self.parse_create_bucket()
             }
             "insert" => self.parse_insert(),
+            "bulk" => self.parse_bulk(),
             "get" => self.parse_get(),
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,

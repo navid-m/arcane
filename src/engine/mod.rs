@@ -36,6 +36,14 @@ pub enum QueryResult {
         bucket: String,
         hash: u64,
     },
+    BatchInserted {
+        bucket: String,
+        count: usize,
+    },
+    BulkCompleted {
+        count: usize,
+        errors: usize,
+    },
     Rows {
         schema: Vec<String>,
         rows: Vec<Vec<String>>,
@@ -52,6 +60,20 @@ impl fmt::Display for QueryResult {
             }
             QueryResult::Inserted { bucket, hash } => {
                 writeln!(f, "Inserted into '{}' with hash {:#016x}.", bucket, hash)
+            }
+            QueryResult::BatchInserted { bucket, count } => {
+                writeln!(f, "Batch inserted {} rows into '{}'.", count, bucket)
+            }
+            QueryResult::BulkCompleted { count, errors } => {
+                if *errors == 0 {
+                    writeln!(f, "Bulk completed: {} statements executed.", count)
+                } else {
+                    writeln!(
+                        f,
+                        "Bulk completed: {} statements, {} errors.",
+                        count, errors
+                    )
+                }
             }
             QueryResult::Rows { schema, rows } => {
                 if rows.is_empty() {
@@ -151,6 +173,8 @@ impl Database {
         match stmt {
             Statement::CreateBucket { name, fields } => self.create_bucket(name, fields),
             Statement::Insert { bucket, values } => self.insert(bucket, values),
+            Statement::BatchInsert { bucket, rows } => self.batch_insert(bucket, rows),
+            Statement::Bulk { statements } => self.bulk(statements),
             Statement::Get {
                 bucket,
                 projection,
@@ -252,6 +276,75 @@ impl Database {
         };
 
         Ok(QueryResult::Inserted { bucket, hash })
+    }
+
+    fn batch_insert(
+        &self,
+        bucket: String,
+        rows: Vec<Vec<(Option<String>, Value)>>,
+    ) -> Result<QueryResult> {
+        let handle = self
+            .buckets
+            .get(&bucket)
+            .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
+
+        let mut records = Vec::with_capacity(rows.len());
+
+        for values in rows.clone() {
+            let fields_values = {
+                let store = handle.read();
+                Self::resolve_values(&store.schema, &values)?
+            };
+
+            {
+                let store = handle.read();
+                for (i, val) in fields_values.iter().enumerate() {
+                    let field = &store.schema.fields[i];
+                    if !val.matches_type(&field.ty) && !matches!(val, Value::Null) {
+                        return Err(ArcaneError::TypeError {
+                            field: field.name.clone(),
+                            expected: field.ty.to_string(),
+                            got: val.type_name().to_string(),
+                        });
+                    }
+                }
+            }
+
+            let record = Record::new(fields_values.clone());
+            let wal_entry = WalInsert {
+                bucket: bucket.clone(),
+                hash: record.hash,
+                fields: fields_values,
+            };
+            self.wal.append_insert(&wal_entry)?;
+            records.push(record);
+        }
+
+        self.wal.append_commit()?;
+
+        let count = {
+            let mut store = handle.write();
+            for record in records {
+                store.insert(record)?;
+            }
+            rows.len()
+        };
+
+        Ok(QueryResult::BatchInserted { bucket, count })
+    }
+
+    fn bulk(&self, statements: Vec<Statement>) -> Result<QueryResult> {
+        let mut count = 0;
+        let mut errors = 0;
+
+        for stmt in statements {
+            match self.execute_stmt(stmt) {
+                Ok(_) => count += 1,
+                Err(_) => errors += 1,
+            }
+        }
+
+        Ok(QueryResult::BulkCompleted { count, errors })
     }
 
     fn get(
