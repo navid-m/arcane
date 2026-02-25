@@ -1,0 +1,45 @@
+[package]
+name = "arcane"
+version = "0.1.0"
+edition = "2021"
+description = "A high-performance, hash-bucketed DBMS"
+license = "GPL-3.0-only"
+
+[lib]
+name = "arcane"
+path = "src/lib.rs"
+
+[[bin]]
+name = "arcaned"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "arcc"
+path = "src/bin/cli.rs"
+
+[dependencies]
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+bincode = "1"
+serde = { version = "1", features = ["derive"] }
+parking_lot = "0.12"
+dashmap = "5"
+crossbeam-channel = "0.5"
+memmap2 = "0.9"
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+crc32fast = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
