@@ -247,3 +247,187 @@ fn libc_fdatasync(fd: i32) {
         libc::fdatasync(fd);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::{FieldDef, FieldType, Schema, Value};
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_wal_create_and_open() {
+        let dir = TempDir::new().unwrap();
+        let wal = Wal::open(dir.path()).unwrap();
+        assert_eq!(wal.seq.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_wal_append_create_bucket() {
+        let dir = TempDir::new().unwrap();
+        let wal = Wal::open(dir.path()).unwrap();
+
+        let schema = Schema {
+            bucket_name: "TestBucket".into(),
+            fields: vec![FieldDef {
+                name: "field1".into(),
+                ty: FieldType::String,
+            }],
+        };
+
+        let seq = wal.append_create_bucket(&schema).unwrap();
+        assert_eq!(seq, 1);
+    }
+
+    #[test]
+    fn test_wal_append_insert() {
+        let dir = TempDir::new().unwrap();
+        let wal = Wal::open(dir.path()).unwrap();
+
+        let insert = WalInsert {
+            bucket: "TestBucket".into(),
+            hash: 0x1234567890abcdef,
+            fields: vec![Value::String("test".into())],
+        };
+
+        let seq = wal.append_insert(&insert).unwrap();
+        assert_eq!(seq, 1);
+    }
+
+    #[test]
+    fn test_wal_append_commit() {
+        let dir = TempDir::new().unwrap();
+        let wal = Wal::open(dir.path()).unwrap();
+
+        let seq = wal.append_commit().unwrap();
+        assert_eq!(seq, 1);
+    }
+
+    #[test]
+    fn test_wal_append_checkpoint() {
+        let dir = TempDir::new().unwrap();
+        let wal = Wal::open(dir.path()).unwrap();
+
+        let seq = wal.append_checkpoint().unwrap();
+        assert_eq!(seq, 1);
+    }
+
+    #[test]
+    fn test_wal_sequence_increment() {
+        let dir = TempDir::new().unwrap();
+        let wal = Wal::open(dir.path()).unwrap();
+
+        let seq1 = wal.append_commit().unwrap();
+        let seq2 = wal.append_commit().unwrap();
+        let seq3 = wal.append_commit().unwrap();
+
+        assert_eq!(seq1, 1);
+        assert_eq!(seq2, 2);
+        assert_eq!(seq3, 3);
+    }
+
+    #[test]
+    fn test_wal_replay() {
+        let dir = TempDir::new().unwrap();
+
+        {
+            let wal = Wal::open(dir.path()).unwrap();
+
+            let schema = Schema {
+                bucket_name: "TestBucket".into(),
+                fields: vec![FieldDef {
+                    name: "field1".into(),
+                    ty: FieldType::String,
+                }],
+            };
+            wal.append_create_bucket(&schema).unwrap();
+
+            let insert = WalInsert {
+                bucket: "TestBucket".into(),
+                hash: 0x1234,
+                fields: vec![Value::String("test".into())],
+            };
+            wal.append_insert(&insert).unwrap();
+            wal.append_commit().unwrap();
+        }
+
+        let entries = Wal::replay(dir.path()).unwrap();
+        assert_eq!(entries.len(), 3);
+
+        match &entries[0] {
+            WalEntry::CreateBucket(schema) => {
+                assert_eq!(schema.bucket_name, "TestBucket");
+            }
+            _ => panic!("Expected CreateBucket"),
+        }
+
+        match &entries[1] {
+            WalEntry::Insert(insert) => {
+                assert_eq!(insert.bucket, "TestBucket");
+                assert_eq!(insert.hash, 0x1234);
+            }
+            _ => panic!("Expected Insert"),
+        }
+
+        assert!(matches!(entries[2], WalEntry::Commit));
+    }
+
+    #[test]
+    fn test_wal_truncate() {
+        let dir = TempDir::new().unwrap();
+        let wal = Wal::open(dir.path()).unwrap();
+
+        wal.append_commit().unwrap();
+        wal.append_commit().unwrap();
+        wal.append_commit().unwrap();
+
+        wal.truncate().unwrap();
+
+        let entries = Wal::replay(dir.path()).unwrap();
+        assert_eq!(entries.len(), 0);
+    }
+
+    #[test]
+    fn test_wal_persistence() {
+        let dir = TempDir::new().unwrap();
+
+        {
+            let wal = Wal::open(dir.path()).unwrap();
+            wal.append_commit().unwrap();
+            wal.append_commit().unwrap();
+        }
+
+        {
+            let wal = Wal::open(dir.path()).unwrap();
+            assert_eq!(wal.seq.load(Ordering::Relaxed), 2);
+        }
+    }
+
+    #[test]
+    fn test_entry_type_conversion() {
+        assert_eq!(EntryType::try_from(0x01).unwrap(), EntryType::CreateBucket);
+        assert_eq!(EntryType::try_from(0x02).unwrap(), EntryType::Insert);
+        assert_eq!(EntryType::try_from(0x03).unwrap(), EntryType::Commit);
+        assert_eq!(EntryType::try_from(0x04).unwrap(), EntryType::Checkpoint);
+        assert!(EntryType::try_from(0xFF).is_err());
+    }
+
+    #[test]
+    fn test_wal_insert_serialization() {
+        let insert = WalInsert {
+            bucket: "TestBucket".into(),
+            hash: 0xdeadbeef,
+            fields: vec![
+                Value::String("Alice".into()),
+                Value::Int(30),
+                Value::Bool(true),
+            ],
+        };
+
+        let serialized = bincode::serialize(&insert).unwrap();
+        let deserialized: WalInsert = bincode::deserialize(&serialized).unwrap();
+
+        assert_eq!(deserialized.bucket, "TestBucket");
+        assert_eq!(deserialized.hash, 0xdeadbeef);
+        assert_eq!(deserialized.fields.len(), 3);
+    }
+}

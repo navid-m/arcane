@@ -505,3 +505,216 @@ impl BucketStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_value_type_matching() {
+        assert!(Value::String("test".into()).matches_type(&FieldType::String));
+        assert!(Value::Int(42).matches_type(&FieldType::Int));
+        assert!(Value::Float(3.14).matches_type(&FieldType::Float));
+        assert!(Value::Bool(true).matches_type(&FieldType::Bool));
+        assert!(Value::Null.matches_type(&FieldType::String));
+        assert!(!Value::String("test".into()).matches_type(&FieldType::Int));
+    }
+
+    #[test]
+    fn test_compute_hash() {
+        let fields1 = vec![Value::String("Alice".into()), Value::Int(30)];
+        let fields2 = vec![Value::String("Alice".into()), Value::Int(30)];
+        let fields3 = vec![Value::String("Bob".into()), Value::Int(30)];
+
+        assert_eq!(compute_hash(&fields1), compute_hash(&fields2));
+        assert_ne!(compute_hash(&fields1), compute_hash(&fields3));
+    }
+
+    #[test]
+    fn test_compute_hash_ignores_null() {
+        let fields1 = vec![Value::String("Alice".into()), Value::Null];
+        let fields2 = vec![Value::String("Alice".into())];
+        assert_eq!(compute_hash(&fields1), compute_hash(&fields2));
+    }
+
+    #[test]
+    fn test_record_serialized_fields() {
+        let fields = vec![Value::String("Alice".into()), Value::Null, Value::Int(30)];
+        let record = Record::new(fields);
+        let serialized = record.serialized_fields();
+
+        assert_eq!(serialized.len(), 2);
+        assert_eq!(serialized[0].0, 0);
+        assert_eq!(serialized[1].0, 2);
+    }
+
+    #[test]
+    fn test_record_reconstruct_fields() {
+        let sparse = vec![(0, Value::String("Alice".into())), (2, Value::Int(30))];
+        let fields = Record::reconstruct_fields(3, sparse);
+
+        assert_eq!(fields.len(), 3);
+        assert!(matches!(fields[0], Value::String(_)));
+        assert!(matches!(fields[1], Value::Null));
+        assert!(matches!(fields[2], Value::Int(30)));
+    }
+
+    #[test]
+    fn test_bucket_create_and_open() {
+        let dir = TempDir::new().unwrap();
+        let schema = Schema {
+            bucket_name: "TestBucket".into(),
+            fields: vec![
+                FieldDef {
+                    name: "name".into(),
+                    ty: FieldType::String,
+                },
+                FieldDef {
+                    name: "age".into(),
+                    ty: FieldType::Int,
+                },
+            ],
+        };
+
+        let store = BucketStore::create(dir.path(), schema.clone()).unwrap();
+        drop(store);
+
+        let store = BucketStore::open(dir.path(), "TestBucket").unwrap();
+        assert_eq!(store.schema.bucket_name, "TestBucket");
+        assert_eq!(store.schema.fields.len(), 2);
+    }
+
+    #[test]
+    fn test_bucket_insert_and_read() {
+        let dir = TempDir::new().unwrap();
+        let schema = Schema {
+            bucket_name: "TestBucket".into(),
+            fields: vec![FieldDef {
+                name: "data".into(),
+                ty: FieldType::String,
+            }],
+        };
+
+        let mut store = BucketStore::create(dir.path(), schema).unwrap();
+        let record = Record::new(vec![Value::String("test data".into())]);
+        let hash = store.insert(record.clone()).unwrap();
+
+        let retrieved = store.get_by_hash(hash).unwrap().unwrap();
+        assert_eq!(retrieved.hash, record.hash);
+        assert_eq!(retrieved.fields.len(), 1);
+    }
+
+    #[test]
+    fn test_bucket_duplicate_detection() {
+        let dir = TempDir::new().unwrap();
+        let schema = Schema {
+            bucket_name: "TestBucket".into(),
+            fields: vec![FieldDef {
+                name: "data".into(),
+                ty: FieldType::String,
+            }],
+        };
+
+        let mut store = BucketStore::create(dir.path(), schema).unwrap();
+        let record = Record::new(vec![Value::String("test".into())]);
+
+        store.insert(record.clone()).unwrap();
+        let result = store.insert(record);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ArcaneError::DuplicateRecord(_, _)
+        ));
+    }
+
+    #[test]
+    fn test_bucket_scan_all() {
+        let dir = TempDir::new().unwrap();
+        let schema = Schema {
+            bucket_name: "TestBucket".into(),
+            fields: vec![FieldDef {
+                name: "id".into(),
+                ty: FieldType::Int,
+            }],
+        };
+
+        let mut store = BucketStore::create(dir.path(), schema).unwrap();
+
+        for i in 0..10 {
+            let record = Record::new(vec![Value::Int(i)]);
+            store.insert(record).unwrap();
+        }
+
+        let records = store.scan_all().unwrap();
+        assert_eq!(records.len(), 10);
+    }
+
+    #[test]
+    fn test_schema_evolution() {
+        let dir = TempDir::new().unwrap();
+        let schema = Schema {
+            bucket_name: "TestBucket".into(),
+            fields: vec![FieldDef {
+                name: "name".into(),
+                ty: FieldType::String,
+            }],
+        };
+
+        let mut store = BucketStore::create(dir.path(), schema).unwrap();
+        let record1 = Record::new(vec![Value::String("Alice".into())]);
+        store.insert(record1).unwrap();
+
+        store
+            .add_field(FieldDef {
+                name: "age".into(),
+                ty: FieldType::Int,
+            })
+            .unwrap();
+
+        assert_eq!(store.schema.fields.len(), 2);
+
+        let record2 = Record::new(vec![Value::String("Bob".into()), Value::Int(30)]);
+        store.insert(record2).unwrap();
+        let records = store.scan_all().unwrap();
+        assert_eq!(records.len(), 2);
+
+        let alice_record = records
+            .iter()
+            .find(|r| matches!(r.fields[0], Value::String(ref s) if s == "Alice"))
+            .expect("Alice record not found");
+
+        assert_eq!(alice_record.fields.len(), 2);
+        assert!(matches!(alice_record.fields[1], Value::Null));
+
+        let bob_record = records
+            .iter()
+            .find(|r| matches!(r.fields[0], Value::String(ref s) if s == "Bob"))
+            .expect("Bob record not found");
+
+        assert_eq!(bob_record.fields.len(), 2);
+        assert!(matches!(bob_record.fields[1], Value::Int(30)));
+    }
+
+    #[test]
+    fn test_schema_field_index() {
+        let schema = Schema {
+            bucket_name: "Test".into(),
+            fields: vec![
+                FieldDef {
+                    name: "first".into(),
+                    ty: FieldType::String,
+                },
+                FieldDef {
+                    name: "second".into(),
+                    ty: FieldType::Int,
+                },
+            ],
+        };
+
+        assert_eq!(schema.field_index("first"), Some(0));
+        assert_eq!(schema.field_index("second"), Some(1));
+        assert_eq!(schema.field_index("nonexistent"), None);
+    }
+}

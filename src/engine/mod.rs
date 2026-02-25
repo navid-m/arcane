@@ -480,3 +480,308 @@ impl Database {
         self.buckets.get(bucket).map(|h| h.read().schema.clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn setup_db() -> (Arc<Database>, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db = Database::open(dir.path()).unwrap();
+        (db, dir)
+    }
+
+    #[test]
+    fn test_create_bucket() {
+        let (db, _dir) = setup_db();
+        let result = db
+            .execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+
+        match result {
+            QueryResult::BucketCreated { name } => assert_eq!(name, "Users"),
+            _ => panic!("Expected BucketCreated"),
+        }
+
+        assert!(db.buckets().contains(&"Users".to_string()));
+    }
+
+    #[test]
+    fn test_create_duplicate_bucket() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        let result = db.execute("create bucket Users (name: string)");
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ArcaneError::BucketExists(_)));
+    }
+
+    #[test]
+    fn test_insert_positional() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        let result = db.execute("insert into Users (\"Alice\", 30)").unwrap();
+
+        match result {
+            QueryResult::Inserted { bucket, hash } => {
+                assert_eq!(bucket, "Users");
+                assert_ne!(hash, 0);
+            }
+            _ => panic!("Expected Inserted"),
+        }
+    }
+
+    #[test]
+    fn test_insert_named() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        let result = db
+            .execute("insert into Users (name: \"Alice\", age: 30)")
+            .unwrap();
+
+        match result {
+            QueryResult::Inserted { .. } => {}
+            _ => panic!("Expected Inserted"),
+        }
+    }
+
+    #[test]
+    fn test_insert_schema_mismatch() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        let result = db.execute("insert into Users (\"Alice\")");
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ArcaneError::SchemaMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn test_insert_type_error() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        let result = db.execute("insert into Users (\"Alice\", \"not a number\")");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_insert_duplicate() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (\"Alice\")").unwrap();
+        let result = db.execute("insert into Users (\"Alice\")");
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ArcaneError::DuplicateRecord(_, _)
+        ));
+    }
+
+    #[test]
+    fn test_batch_insert() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        let result = db
+            .execute("insert into Users ([name: \"Alice\", age: 30], [name: \"Bob\", age: 25])")
+            .unwrap();
+
+        match result {
+            QueryResult::BatchInserted { bucket, count } => {
+                assert_eq!(bucket, "Users");
+                assert_eq!(count, 2);
+            }
+            _ => panic!("Expected BatchInserted"),
+        }
+    }
+
+    #[test]
+    fn test_bulk() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        let result = db
+            .execute("bulk { insert into Users (\"Alice\") insert into Users (\"Bob\") }")
+            .unwrap();
+
+        match result {
+            QueryResult::BulkCompleted { count, errors } => {
+                assert_eq!(count, 2);
+                assert_eq!(errors, 0);
+            }
+            _ => panic!("Expected BulkCompleted"),
+        }
+    }
+
+    #[test]
+    fn test_get_star() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (\"Alice\")").unwrap();
+        db.execute("insert into Users (\"Bob\")").unwrap();
+
+        let result = db.execute("get * from Users").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 2); // __hash__ + name
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_head() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (id: int)").unwrap();
+        for i in 0..10 {
+            db.execute(&format!("insert into Users ({})", i)).unwrap();
+        }
+
+        let result = db.execute("get head(3) from Users").unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 3);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_tail() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (id: int)").unwrap();
+        for i in 0..10 {
+            db.execute(&format!("insert into Users ({})", i)).unwrap();
+        }
+
+        let result = db.execute("get tail(3) from Users").unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 3);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_with_filter() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+        db.execute("insert into Users (\"Bob\", 25)").unwrap();
+        db.execute("insert into Users (\"Alice\", 35)").unwrap();
+
+        let result = db
+            .execute("get * from Users where name = \"Alice\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_hash_projection() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (\"Alice\")").unwrap();
+
+        let result = db.execute("get __hash__ from Users").unwrap();
+
+        match result {
+            QueryResult::Hashes(hashes) => {
+                assert_eq!(hashes.len(), 1);
+            }
+            _ => panic!("Expected Hashes"),
+        }
+    }
+
+    #[test]
+    fn test_schema_evolution_on_insert() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (name: \"Alice\")").unwrap();
+        db.execute("insert into Users (name: \"Bob\", age: 30)")
+            .unwrap();
+
+        let schema = db.schema("Users").unwrap();
+        assert_eq!(schema.fields.len(), 2);
+        assert_eq!(schema.fields[1].name, "age");
+    }
+
+    #[test]
+    fn test_execute_script() {
+        let (db, _dir) = setup_db();
+        let script = r#"
+            create bucket Users (name: string);
+            insert into Users ("Alice");
+            insert into Users ("Bob");
+            get * from Users;
+        "#;
+
+        let results = db.execute_script(script);
+        assert_eq!(results.len(), 4);
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    #[test]
+    fn test_bucket_not_found() {
+        let (db, _dir) = setup_db();
+        let result = db.execute("insert into NonExistent (\"data\")");
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ArcaneError::BucketNotFound(_)
+        ));
+    }
+
+    #[test]
+    fn test_unknown_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (\"Alice\")").unwrap();
+        let result = db.execute("get * from Users where nonexistent = \"value\"");
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ArcaneError::UnknownField(_)));
+    }
+
+    #[test]
+    fn test_persistence() {
+        let dir = TempDir::new().unwrap();
+        {
+            let db = Database::open(dir.path()).unwrap();
+            db.execute("create bucket Users (name: string)").unwrap();
+            db.execute("insert into Users (\"Alice\")").unwrap();
+        }
+        {
+            let db = Database::open(dir.path()).unwrap();
+            assert!(db.buckets().contains(&"Users".to_string()));
+
+            let result = db.execute("get * from Users").unwrap();
+            match result {
+                QueryResult::Rows { rows, .. } => {
+                    assert_eq!(rows.len(), 1);
+                }
+                _ => panic!("Expected Rows"),
+            }
+        }
+    }
+}

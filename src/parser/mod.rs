@@ -587,3 +587,210 @@ pub fn parse_script(src: &str) -> Vec<Result<Statement>> {
 
     statements
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_create_bucket() {
+        let stmt = parse_statement("create bucket Users (name: string, age: int)").unwrap();
+        match stmt {
+            Statement::CreateBucket { name, fields } => {
+                assert_eq!(name, "Users");
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name, "name");
+                assert_eq!(fields[1].name, "age");
+            }
+            _ => panic!("Expected CreateBucket"),
+        }
+    }
+
+    #[test]
+    fn test_parse_insert_positional() {
+        let stmt = parse_statement("insert into Users (\"Alice\", 30)").unwrap();
+        match stmt {
+            Statement::Insert { bucket, values } => {
+                assert_eq!(bucket, "Users");
+                assert_eq!(values.len(), 2);
+                assert!(values[0].0.is_none());
+                assert!(values[1].0.is_none());
+            }
+            _ => panic!("Expected Insert"),
+        }
+    }
+
+    #[test]
+    fn test_parse_insert_named() {
+        let stmt = parse_statement("insert into Users (name: \"Alice\", age: 30)").unwrap();
+        match stmt {
+            Statement::Insert { bucket, values } => {
+                assert_eq!(bucket, "Users");
+                assert_eq!(values.len(), 2);
+                assert_eq!(values[0].0.as_ref().unwrap(), "name");
+                assert_eq!(values[1].0.as_ref().unwrap(), "age");
+            }
+            _ => panic!("Expected Insert"),
+        }
+    }
+
+    #[test]
+    fn test_parse_batch_insert() {
+        let stmt = parse_statement(
+            "insert into Users ([name: \"Alice\", age: 30], [name: \"Bob\", age: 25])",
+        )
+        .unwrap();
+        match stmt {
+            Statement::BatchInsert { bucket, rows } => {
+                assert_eq!(bucket, "Users");
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(rows[1].len(), 2);
+            }
+            _ => panic!("Expected BatchInsert"),
+        }
+    }
+
+    #[test]
+    fn test_parse_bulk() {
+        let stmt = parse_statement(
+            "bulk { insert into Users (\"Alice\", 30) insert into Users (\"Bob\", 25) }",
+        )
+        .unwrap();
+        match stmt {
+            Statement::Bulk { statements } => {
+                assert_eq!(statements.len(), 2);
+            }
+            _ => panic!("Expected Bulk"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_star() {
+        let stmt = parse_statement("get * from Users").unwrap();
+        match stmt {
+            Statement::Get {
+                bucket,
+                projection,
+                filter,
+            } => {
+                assert_eq!(bucket, "Users");
+                assert!(matches!(projection, Projection::Star));
+                assert!(filter.is_none());
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_with_filter() {
+        let stmt = parse_statement("get * from Users where name = \"Alice\"").unwrap();
+        match stmt {
+            Statement::Get {
+                bucket,
+                projection,
+                filter,
+            } => {
+                assert_eq!(bucket, "Users");
+                assert!(matches!(projection, Projection::Star));
+                assert!(filter.is_some());
+                let f = filter.unwrap();
+                assert_eq!(f.field, "name");
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_head() {
+        let stmt = parse_statement("get head(10) from Users").unwrap();
+        match stmt {
+            Statement::Get { projection, .. } => {
+                assert!(matches!(projection, Projection::Head(10)));
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_tail() {
+        let stmt = parse_statement("get tail(5) from Users").unwrap();
+        match stmt {
+            Statement::Get { projection, .. } => {
+                assert!(matches!(projection, Projection::Tail(5)));
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_hash() {
+        let stmt = parse_statement("get __hash__ from Users").unwrap();
+        match stmt {
+            Statement::Get { projection, .. } => {
+                assert!(matches!(projection, Projection::Hash));
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_with_semicolon() {
+        let stmt = parse_statement("create bucket Test (id: int);").unwrap();
+        match stmt {
+            Statement::CreateBucket { name, .. } => {
+                assert_eq!(name, "Test");
+            }
+            _ => panic!("Expected CreateBucket"),
+        }
+    }
+
+    #[test]
+    fn test_parse_script_multiline() {
+        let script = r#"
+            create bucket Users (name: string);
+            insert into Users ("Alice");
+            get * from Users;
+        "#;
+        let stmts = parse_script(script);
+        assert_eq!(stmts.len(), 3);
+        assert!(stmts.iter().all(|r| r.is_ok()));
+    }
+
+    #[test]
+    fn test_parse_script_with_comments() {
+        let script = r#"
+            # This is a comment
+            create bucket Users (name: string);
+            # Another comment
+            insert into Users ("Alice");
+        "#;
+        let stmts = parse_script(script);
+        assert_eq!(stmts.len(), 2);
+    }
+
+    #[test]
+    fn test_lexer_string_escapes() {
+        let tokens = Lexer::new(r#""hello\nworld""#).tokenize().unwrap();
+        match &tokens[0] {
+            Token::StringLit(s) => assert_eq!(s, "hello\nworld"),
+            _ => panic!("Expected string literal"),
+        }
+    }
+
+    #[test]
+    fn test_lexer_numbers() {
+        let tokens = Lexer::new("42 3.14 -10").tokenize().unwrap();
+        assert!(matches!(tokens[0], Token::IntLit(42)));
+        assert!(matches!(tokens[1], Token::FloatLit(_)));
+        assert!(matches!(tokens[2], Token::IntLit(-10)));
+    }
+
+    #[test]
+    fn test_lexer_keywords() {
+        let tokens = Lexer::new("true false null").tokenize().unwrap();
+        assert!(matches!(tokens[0], Token::Bool(true)));
+        assert!(matches!(tokens[1], Token::Bool(false)));
+        assert!(matches!(tokens[2], Token::Null));
+    }
+}
