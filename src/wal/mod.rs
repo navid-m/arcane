@@ -63,10 +63,17 @@ pub enum WalEntry {
 pub struct Wal {
     file: Mutex<File>,
     seq: AtomicU64,
+    commit_count: AtomicU64,
+    no_sync: bool,
+    fsync_interval: u64,
 }
 
 impl Wal {
     pub fn open(dir: &Path) -> Result<Self> {
+        Self::open_with_config(dir, false, 1)
+    }
+
+    pub fn open_with_config(dir: &Path, no_sync: bool, fsync_interval: u64) -> Result<Self> {
         let path = dir.join("arcane.wal");
         let file = OpenOptions::new()
             .read(true)
@@ -77,6 +84,9 @@ impl Wal {
         let wal = Wal {
             file: Mutex::new(file),
             seq: AtomicU64::new(0),
+            commit_count: AtomicU64::new(0),
+            no_sync,
+            fsync_interval,
         };
         {
             let mut f = wal.file.lock();
@@ -104,7 +114,22 @@ impl Wal {
     }
 
     pub fn append_commit(&self) -> Result<u64> {
-        self.write_entry(EntryType::Commit, &[])
+        let seq = self.write_entry(EntryType::Commit, &[])?;
+
+        if !self.no_sync {
+            let count = self.commit_count.fetch_add(1, Ordering::Relaxed) + 1;
+            if count % self.fsync_interval == 0 {
+                let mut f = self.file.lock();
+                f.flush()?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::io::AsRawFd;
+                    libc_fdatasync(f.as_raw_fd());
+                }
+            }
+        }
+
+        Ok(seq)
     }
 
     pub fn append_checkpoint(&self) -> Result<u64> {
@@ -126,12 +151,9 @@ impl Wal {
         let mut f = self.file.lock();
         f.seek(SeekFrom::End(0))?;
         f.write_all(&buf)?;
-        f.flush()?;
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            libc_fdatasync(f.as_raw_fd());
+        if !self.no_sync {
+            f.flush()?;
         }
 
         Ok(seq)
@@ -175,6 +197,7 @@ impl Wal {
                 Ok(t) => t,
                 Err(_) => break,
             };
+
             let computed = Self::crc(seq, ty_byte, &payload);
 
             if computed != stored_crc {

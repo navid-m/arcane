@@ -16,6 +16,13 @@ pub struct Config {
 
     /// Disable fsync for benchmarks (NOT crash-safe).
     pub no_sync: bool,
+
+    /// Disable WAL entirely (NOT crash-safe, but fastest).
+    pub no_wal: bool,
+
+    /// Batch commits: only fsync every N commits (trades durability for performance).
+    /// 1 = fsync every commit (safest), higher = less frequent fsync.
+    pub fsync_interval: u64,
 }
 
 impl Default for Config {
@@ -23,6 +30,8 @@ impl Default for Config {
         Config {
             checkpoint_interval: 10_000,
             no_sync: false,
+            no_wal: false,
+            fsync_interval: 1,
         }
     }
 }
@@ -127,13 +136,22 @@ pub struct Database {
     dir: PathBuf,
     buckets: DashMap<String, BucketHandle>,
     wal: Arc<Wal>,
+    config: Config,
 }
 
 impl Database {
     pub fn open<P: AsRef<Path>>(dir: P) -> Result<Arc<Self>> {
+        Self::open_with_config(dir, Config::default())
+    }
+
+    pub fn open_with_config<P: AsRef<Path>>(dir: P, config: Config) -> Result<Arc<Self>> {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
-        let wal = Arc::new(Wal::open(&dir)?);
+        let wal = Arc::new(Wal::open_with_config(
+            &dir,
+            config.no_sync,
+            config.fsync_interval,
+        )?);
         let buckets: DashMap<String, BucketHandle> = DashMap::new();
 
         for entry in std::fs::read_dir(&dir)? {
@@ -155,9 +173,12 @@ impl Database {
             dir: dir.clone(),
             buckets,
             wal,
+            config,
         });
 
-        db.recover()?;
+        if !db.config.no_wal {
+            db.recover()?;
+        }
 
         Ok(db)
     }
@@ -201,8 +222,10 @@ impl Database {
             fields,
         };
 
-        self.wal.append_create_bucket(&schema)?;
-        self.wal.append_commit()?;
+        if !self.config.no_wal {
+            self.wal.append_create_bucket(&schema)?;
+            self.wal.append_commit()?;
+        }
 
         let store = BucketStore::create(&self.dir, schema)?;
         self.buckets
@@ -267,8 +290,10 @@ impl Database {
             fields: record.fields.clone(),
         };
 
-        self.wal.append_insert(&wal_entry)?;
-        self.wal.append_commit()?;
+        if !self.config.no_wal {
+            self.wal.append_insert(&wal_entry)?;
+            self.wal.append_commit()?;
+        }
 
         let hash = {
             let mut store = handle.write();
@@ -311,16 +336,22 @@ impl Database {
             }
 
             let record = Record::new(fields_values.clone());
-            let wal_entry = WalInsert {
-                bucket: bucket.clone(),
-                hash: record.hash,
-                fields: fields_values,
-            };
-            self.wal.append_insert(&wal_entry)?;
+
+            if !self.config.no_wal {
+                let wal_entry = WalInsert {
+                    bucket: bucket.clone(),
+                    hash: record.hash,
+                    fields: fields_values,
+                };
+                self.wal.append_insert(&wal_entry)?;
+            }
+
             records.push(record);
         }
 
-        self.wal.append_commit()?;
+        if !self.config.no_wal {
+            self.wal.append_commit()?;
+        }
 
         let count = {
             let mut store = handle.write();
