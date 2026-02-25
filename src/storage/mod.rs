@@ -292,7 +292,7 @@ impl BucketStore {
         self.data_file.seek(SeekFrom::Start(data_off))?;
 
         while pos < file_len {
-            let mut rec_hdr = [0u8; 13]; // 8 hash + 1 alive + 4 len
+            let mut rec_hdr = [0u8; 13];
             if self.data_file.read_exact(&mut rec_hdr).is_err() {
                 break;
             }
