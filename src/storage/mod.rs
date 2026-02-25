@@ -210,7 +210,6 @@ impl BucketStore {
 
         Ok(BucketStore {
             schema,
-            data_path,
             idx_path,
             index: Vec::new(),
             data_file,
@@ -260,7 +259,6 @@ impl BucketStore {
 
         let mut store = BucketStore {
             schema,
-            data_path,
             idx_path,
             index,
             data_file,
@@ -268,7 +266,6 @@ impl BucketStore {
             record_count,
         };
 
-        // Rebuild index if empty but we have records.
         if store.index.is_empty() && record_count > 0 {
             store.rebuild_index(data_off)?;
         }
