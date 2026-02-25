@@ -68,6 +68,7 @@ pub enum Token {
     Star,
     Comma,
     Colon,
+    Semicolon,
     LParen,
     RParen,
     LBracket,
@@ -190,6 +191,7 @@ impl<'a> Lexer<'a> {
             Some('*') => Ok(Token::Star),
             Some(',') => Ok(Token::Comma),
             Some(':') => Ok(Token::Colon),
+            Some(';') => Ok(Token::Semicolon),
             Some('(') => Ok(Token::LParen),
             Some(')') => Ok(Token::RParen),
             Some('[') => Ok(Token::LBracket),
@@ -547,18 +549,41 @@ pub fn parse_statement(line: &str) -> Result<Statement> {
     } else {
         line
     };
-    let line = line.trim();
 
+    let line = line.trim();
     let tokens = Lexer::new(line).tokenize()?;
     let mut parser = Parser::new(tokens);
     let stmt = parser.parse_statement()?;
+
+    if parser.peek() == &Token::Semicolon {
+        parser.advance();
+    }
+
     Ok(stmt)
 }
 
 pub fn parse_script(src: &str) -> Vec<Result<Statement>> {
-    src.lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(parse_statement)
-        .collect()
+    let mut statements = Vec::new();
+    let mut current = String::new();
+
+    for line in src.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        current.push(' ');
+        current.push_str(line);
+
+        if line.ends_with(';') {
+            statements.push(parse_statement(&current));
+            current.clear();
+        }
+    }
+
+    if !current.trim().is_empty() {
+        statements.push(parse_statement(&current));
+    }
+
+    statements
 }
