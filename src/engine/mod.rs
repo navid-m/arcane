@@ -428,13 +428,51 @@ impl Database {
         let mut count = 0;
 
         for record in records {
-            if record.fields.get(idx).map_or(false, |v| v == &filter.value) {
+            if record.fields.get(idx).map_or(false, |v| {
+                Self::compare_values(v, &filter.op, &filter.value)
+            }) {
                 store.delete(record.hash)?;
                 count += 1;
             }
         }
 
         Ok(QueryResult::Deleted { bucket, count })
+    }
+
+    fn compare_values(left: &Value, op: &parser::CompareOp, right: &Value) -> bool {
+        use parser::CompareOp::*;
+        match op {
+            Eq => left == right,
+            Ne => left != right,
+            Lt => match (left, right) {
+                (Value::Int(a), Value::Int(b)) => a < b,
+                (Value::Float(a), Value::Float(b)) => a < b,
+                (Value::Int(a), Value::Float(b)) => (*a as f64) < *b,
+                (Value::Float(a), Value::Int(b)) => *a < (*b as f64),
+                _ => false,
+            },
+            Le => match (left, right) {
+                (Value::Int(a), Value::Int(b)) => a <= b,
+                (Value::Float(a), Value::Float(b)) => a <= b,
+                (Value::Int(a), Value::Float(b)) => (*a as f64) <= *b,
+                (Value::Float(a), Value::Int(b)) => *a <= (*b as f64),
+                _ => false,
+            },
+            Gt => match (left, right) {
+                (Value::Int(a), Value::Int(b)) => a > b,
+                (Value::Float(a), Value::Float(b)) => a > b,
+                (Value::Int(a), Value::Float(b)) => (*a as f64) > *b,
+                (Value::Float(a), Value::Int(b)) => *a > (*b as f64),
+                _ => false,
+            },
+            Ge => match (left, right) {
+                (Value::Int(a), Value::Int(b)) => a >= b,
+                (Value::Float(a), Value::Float(b)) => a >= b,
+                (Value::Int(a), Value::Float(b)) => (*a as f64) >= *b,
+                (Value::Float(a), Value::Int(b)) => *a >= (*b as f64),
+                _ => false,
+            },
+        }
     }
 
     fn truncate(&self, bucket: String) -> Result<QueryResult> {
@@ -468,7 +506,11 @@ impl Database {
             let idx = schema
                 .field_index(&f.field)
                 .ok_or_else(|| ArcaneError::UnknownField(f.field.clone()))?;
-            records.retain(|r| r.fields.get(idx).map_or(false, |v| v == &f.value));
+            records.retain(|r| {
+                r.fields
+                    .get(idx)
+                    .map_or(false, |v| Self::compare_values(v, &f.op, &f.value))
+            });
         }
 
         match projection {

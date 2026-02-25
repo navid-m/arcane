@@ -60,9 +60,20 @@ pub enum Projection {
     Tail(usize),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompareOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
 #[derive(Debug, Clone)]
 pub struct Filter {
     pub field: String,
+    pub op: CompareOp,
     pub value: Value,
 }
 
@@ -85,6 +96,11 @@ pub enum Token {
     LBrace,
     RBrace,
     Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
     Eof,
 }
 
@@ -208,6 +224,33 @@ impl<'a> Lexer<'a> {
             Some('{') => Ok(Token::LBrace),
             Some('}') => Ok(Token::RBrace),
             Some('=') => Ok(Token::Eq),
+            Some('!') => {
+                if self.peek_char() == Some('=') {
+                    self.advance();
+                    Ok(Token::Ne)
+                } else {
+                    Err(ArcaneError::ParseError {
+                        pos: self.pos,
+                        msg: "Unexpected character: '!'".into(),
+                    })
+                }
+            }
+            Some('<') => {
+                if self.peek_char() == Some('=') {
+                    self.advance();
+                    Ok(Token::Le)
+                } else {
+                    Ok(Token::Lt)
+                }
+            }
+            Some('>') => {
+                if self.peek_char() == Some('=') {
+                    self.advance();
+                    Ok(Token::Ge)
+                } else {
+                    Ok(Token::Gt)
+                }
+            }
             Some(c) if c.is_ascii_digit() || c == '-' => Ok(self.read_number(c)),
             Some(c) if c.is_alphabetic() || c == '_' => Ok(self.read_ident(c)),
             Some(c) => Err(ArcaneError::ParseError {
@@ -515,9 +558,9 @@ impl Parser {
             if kw.to_lowercase() == "where" {
                 self.advance();
                 let field = self.expect_ident()?;
-                self.expect_token(&Token::Eq)?;
+                let op = self.parse_compare_op()?;
                 let value = self.parse_literal()?;
-                Some(Filter { field, value })
+                Some(Filter { field, op, value })
             } else {
                 None
             }
@@ -551,13 +594,29 @@ impl Parser {
         }
 
         let field = self.expect_ident()?;
-        self.expect_token(&Token::Eq)?;
+        let op = self.parse_compare_op()?;
         let value = self.parse_literal()?;
 
         Ok(Statement::Delete {
             bucket,
-            filter: Filter { field, value },
+            filter: Filter { field, op, value },
         })
+    }
+
+    fn parse_compare_op(&mut self) -> Result<CompareOp> {
+        let tok = self.advance().clone();
+        match tok {
+            Token::Eq => Ok(CompareOp::Eq),
+            Token::Ne => Ok(CompareOp::Ne),
+            Token::Lt => Ok(CompareOp::Lt),
+            Token::Le => Ok(CompareOp::Le),
+            Token::Gt => Ok(CompareOp::Gt),
+            Token::Ge => Ok(CompareOp::Ge),
+            other => Err(ArcaneError::ParseError {
+                pos: self.pos,
+                msg: format!("Expected comparison operator, got {:?}", other),
+            }),
+        }
     }
 
     fn parse_statement(&mut self) -> Result<Statement> {
