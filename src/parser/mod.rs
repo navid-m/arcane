@@ -41,6 +41,13 @@ pub enum Statement {
         projection: Projection,
         filter: Option<Filter>,
     },
+    Delete {
+        bucket: String,
+        filter: Filter,
+    },
+    Truncate {
+        bucket: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -518,6 +525,34 @@ impl Parser {
         })
     }
 
+    fn parse_delete(&mut self) -> Result<Statement> {
+        let from_kw = self.expect_ident()?;
+        if from_kw.to_lowercase() != "from" {
+            return Err(ArcaneError::ParseError {
+                pos: self.pos,
+                msg: format!("Expected 'from', got '{}'", from_kw),
+            });
+        }
+        let bucket = self.expect_ident()?;
+
+        let where_kw = self.expect_ident()?;
+        if where_kw.to_lowercase() != "where" {
+            return Err(ArcaneError::ParseError {
+                pos: self.pos,
+                msg: format!("Expected 'where', got '{}'", where_kw),
+            });
+        }
+
+        let field = self.expect_ident()?;
+        self.expect_token(&Token::Eq)?;
+        let value = self.parse_literal()?;
+
+        Ok(Statement::Delete {
+            bucket,
+            filter: Filter { field, value },
+        })
+    }
+
     fn parse_statement(&mut self) -> Result<Statement> {
         let kw = self.expect_ident()?;
         match kw.to_lowercase().as_str() {
@@ -534,6 +569,11 @@ impl Parser {
             "insert" => self.parse_insert(),
             "bulk" => self.parse_bulk(),
             "get" => self.parse_get(),
+            "delete" => self.parse_delete(),
+            "truncate" => {
+                let bucket = self.expect_ident()?;
+                Ok(Statement::Truncate { bucket })
+            }
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,
                 msg: format!("Unknown statement keyword: '{}'", other),

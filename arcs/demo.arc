@@ -1,7 +1,9 @@
 # Arcane example script — run with: arcc run examples/demo.arc
 
 # Create a bucket with a schema
+
 create bucket Names (first_name: string, last_name: string);
+truncate Names;
 
 insert into Names (first_name: "Bob", last_name: "Marley", non_existent_field: "value", another_non_field: "yo");
 insert into Names ("Alice", "Cooper");
@@ -26,6 +28,7 @@ get __hash__ from Names where first_name = "Alice";
 
 # Create another bucket
 create bucket Products (name: string, price: float, in_stock: bool);
+truncate Products;
 
 insert into Products (name: "Widget", price: 9.99, in_stock: true);
 insert into Products (name: "Gadget", price: 24.99, in_stock: false);

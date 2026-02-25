@@ -384,6 +384,34 @@ impl BucketStore {
         Ok(record.hash)
     }
 
+    /// Delete a record by hash (mark as deleted)
+    pub fn delete(&mut self, hash: u64) -> Result<bool> {
+        match self.index.binary_search_by_key(&hash, |e| e.0) {
+            Ok(idx) => {
+                let offset = self.index[idx].1;
+                self.data_file.seek(SeekFrom::Start(offset + 8))?;
+                self.data_file.write_all(&[0x00])?;
+                self.index.remove(idx);
+                self.record_count = self.record_count.saturating_sub(1);
+                Ok(true)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Truncate all records
+    pub fn truncate(&mut self) -> Result<()> {
+        self.index.clear();
+        self.record_count = 0;
+        let data_off = self.data_off()?;
+        self.data_file.set_len(data_off)?;
+        self.write_pos = data_off;
+        self.data_file.seek(SeekFrom::Start(8))?;
+        self.data_file.write_all(&0u64.to_le_bytes())?;
+        self.flush_index()?;
+        Ok(())
+    }
+
     /// Read a record by its file offset.
     pub fn read_at(&mut self, offset: u64) -> Result<Option<Record>> {
         self.data_file.seek(SeekFrom::Start(offset))?;

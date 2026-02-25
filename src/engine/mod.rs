@@ -53,6 +53,13 @@ pub enum QueryResult {
         count: usize,
         errors: usize,
     },
+    Deleted {
+        bucket: String,
+        count: usize,
+    },
+    Truncated {
+        bucket: String,
+    },
     Rows {
         schema: Vec<String>,
         rows: Vec<Vec<String>>,
@@ -83,6 +90,12 @@ impl fmt::Display for QueryResult {
                         count, errors
                     )
                 }
+            }
+            QueryResult::Deleted { bucket, count } => {
+                writeln!(f, "Deleted {} rows from '{}'.", count, bucket)
+            }
+            QueryResult::Truncated { bucket } => {
+                writeln!(f, "Truncated bucket '{}'.", bucket)
             }
             QueryResult::Rows { schema, rows } => {
                 if rows.is_empty() {
@@ -189,13 +202,15 @@ impl Database {
         self.execute_stmt(stmt)
     }
 
-    /// Execute a pre-parsed statement (useful when embedding).
+    /// Execute a pre-parsed statement.
     pub fn execute_stmt(&self, stmt: Statement) -> Result<QueryResult> {
         match stmt {
             Statement::CreateBucket { name, fields } => self.create_bucket(name, fields),
             Statement::Insert { bucket, values } => self.insert(bucket, values),
             Statement::BatchInsert { bucket, rows } => self.batch_insert(bucket, rows),
             Statement::Bulk { statements } => self.bulk(statements),
+            Statement::Delete { bucket, filter } => self.delete(bucket, filter),
+            Statement::Truncate { bucket } => self.truncate(bucket),
             Statement::Get {
                 bucket,
                 projection,
@@ -376,6 +391,42 @@ impl Database {
         }
 
         Ok(QueryResult::BulkCompleted { count, errors })
+    }
+
+    fn delete(&self, bucket: String, filter: Filter) -> Result<QueryResult> {
+        let handle = self
+            .buckets
+            .get(&bucket)
+            .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
+
+        let mut store = handle.write();
+        let schema = store.schema.clone();
+        let idx = schema
+            .field_index(&filter.field)
+            .ok_or_else(|| ArcaneError::UnknownField(filter.field.clone()))?;
+        let records: Vec<Record> = store.scan_all()?;
+        let mut count = 0;
+
+        for record in records {
+            if record.fields.get(idx).map_or(false, |v| v == &filter.value) {
+                store.delete(record.hash)?;
+                count += 1;
+            }
+        }
+
+        Ok(QueryResult::Deleted { bucket, count })
+    }
+
+    fn truncate(&self, bucket: String) -> Result<QueryResult> {
+        let handle = self
+            .buckets
+            .get(&bucket)
+            .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
+
+        let mut store = handle.write();
+        store.truncate()?;
+
+        Ok(QueryResult::Truncated { bucket })
     }
 
     fn get(
