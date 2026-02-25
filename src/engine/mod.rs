@@ -260,11 +260,11 @@ impl Database {
             }
         }
 
-        let record = Record::new(fields_values.clone());
+        let record = Record::new(fields_values);
         let wal_entry = WalInsert {
             bucket: bucket.clone(),
             hash: record.hash,
-            fields: fields_values,
+            fields: record.fields.clone(),
         };
 
         self.wal.append_insert(&wal_entry)?;
