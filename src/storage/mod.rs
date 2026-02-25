@@ -128,12 +128,36 @@ impl Record {
     pub fn get_field(&self, idx: usize) -> Option<&Value> {
         self.fields.get(idx)
     }
+
+    /// Returns (field_index, value) pairs for non-null values for serialization.
+    pub fn serialized_fields(&self) -> Vec<(usize, &Value)> {
+        self.fields
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !matches!(v, Value::Null))
+            .map(|(i, v)| (i, v))
+            .collect()
+    }
+
+    /// Reconstruct full fields vector from deserialized (index, value) pairs.
+    pub fn reconstruct_fields(num_fields: usize, sparse: Vec<(usize, Value)>) -> Vec<Value> {
+        let mut fields = vec![Value::Null; num_fields];
+        for (idx, val) in sparse {
+            if idx < num_fields {
+                fields[idx] = val;
+            }
+        }
+        fields
+    }
 }
 
 pub fn compute_hash(fields: &[Value]) -> u64 {
     use xxhash_rust::xxh3::Xxh3;
     let mut h = Xxh3::new();
     for v in fields {
+        if matches!(v, Value::Null) {
+            continue;
+        }
         h.update(&v.hash_bytes());
         h.update(&[0x00]);
     }
@@ -322,7 +346,12 @@ impl BucketStore {
         }
 
         let offset = self.write_pos;
-        let field_bytes = bincode::serialize(&record.fields)?;
+        let serialized: Vec<(usize, Value)> = record
+            .serialized_fields()
+            .into_iter()
+            .map(|(i, v)| (i, v.clone()))
+            .collect();
+        let field_bytes = bincode::serialize(&serialized)?;
         let len = field_bytes.len() as u32;
         let mut buf = Vec::with_capacity(13 + field_bytes.len());
 
@@ -372,7 +401,8 @@ impl BucketStore {
 
         let mut field_bytes = vec![0u8; len];
         self.data_file.read_exact(&mut field_bytes)?;
-        let fields: Vec<Value> = bincode::deserialize(&field_bytes)?;
+        let sparse: Vec<(usize, Value)> = bincode::deserialize(&field_bytes)?;
+        let fields = Record::reconstruct_fields(self.schema.fields.len(), sparse);
         Ok(Some(Record { hash, fields }))
     }
 

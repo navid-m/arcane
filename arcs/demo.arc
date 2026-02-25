@@ -3,12 +3,10 @@
 # Create a bucket with a schema
 create bucket Names (first_name: string, last_name: string)
 
-# Insert using positional syntax
+insert into Names (first_name: "Bob", last_name: "Marley", non_existent_field: "value")
 insert into Names ("Alice", "Cooper")
 insert into Names ("Bob", "Marley")
 insert into Names ("Alice", "Bentley")
-
-# Insert using named field syntax
 insert into Names (first_name: "Charlie", last_name: "Parker")
 
 # Get all rows

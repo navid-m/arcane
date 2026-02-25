@@ -155,7 +155,7 @@ impl<'a> Lexer<'a> {
         match s.to_lowercase().as_str() {
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
-            "null" => Token::Null,
+            "null" | "__null__" => Token::Null,
             _ => Token::Ident(s),
         }
     }
