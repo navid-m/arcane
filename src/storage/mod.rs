@@ -187,25 +187,21 @@ impl BucketStore {
             .create_new(true)
             .open(&data_path)?;
 
-        // Write header placeholder.
         let header = Self::build_header(0, HEADER_SIZE, 0);
         data_file.write_all(&header)?;
 
-        // Serialize and write schema.
         let schema_bytes = bincode::serialize(&schema)?;
         let schema_off = HEADER_SIZE;
         data_file.write_all(&schema_bytes)?;
 
         let data_off = schema_off + schema_bytes.len() as u64;
-        // Patch data_off into header.
         let mut header = Self::build_header(0, data_off, 0);
-        // Also write schema_off.
+
         header[24..32].copy_from_slice(&schema_off.to_le_bytes());
         data_file.seek(SeekFrom::Start(0))?;
         data_file.write_all(&header)?;
         data_file.seek(SeekFrom::Start(data_off))?;
 
-        // Empty index file.
         File::create(&idx_path)?;
 
         Ok(BucketStore {
@@ -228,9 +224,8 @@ impl BucketStore {
         }
 
         let mut data_file = OpenOptions::new().read(true).write(true).open(&data_path)?;
-
-        // Read header.
         let mut hdr = [0u8; HEADER_SIZE as usize];
+
         data_file.read_exact(&mut hdr)?;
 
         if &hdr[0..8] != MAGIC {
@@ -240,15 +235,14 @@ impl BucketStore {
         let schema_off = u64::from_le_bytes(hdr[24..32].try_into().unwrap());
         let data_off = u64::from_le_bytes(hdr[32..40].try_into().unwrap());
         let record_count = u64::from_le_bytes(hdr[8..16].try_into().unwrap());
-
-        // Read schema.
         let schema_len = (data_off - schema_off) as usize;
+
         data_file.seek(SeekFrom::Start(schema_off))?;
+
         let mut schema_bytes = vec![0u8; schema_len];
         data_file.read_exact(&mut schema_bytes)?;
         let schema: Schema = bincode::deserialize(&schema_bytes)?;
 
-        // Load or rebuild index.
         let index = if idx_path.exists() {
             Self::load_index(&idx_path)?
         } else {
@@ -256,7 +250,6 @@ impl BucketStore {
         };
 
         let write_pos = data_file.seek(SeekFrom::End(0))?;
-
         let mut store = BucketStore {
             schema,
             idx_path,
@@ -287,7 +280,6 @@ impl BucketStore {
             let offset = u64::from_le_bytes(buf[8..16].try_into().unwrap());
             idx.push((hash, offset));
         }
-        // Ensure sorted for binary search.
         idx.sort_unstable_by_key(|e| e.0);
         Ok(idx)
     }
@@ -311,7 +303,6 @@ impl BucketStore {
             if alive == 0x01 {
                 index.push((hash, pos));
             }
-            // Skip field data.
             self.data_file.seek(SeekFrom::Current(len as i64))?;
             pos += 13 + len;
         }
@@ -323,7 +314,6 @@ impl BucketStore {
 
     /// Insert a record. Returns its hash.
     pub fn insert(&mut self, record: Record) -> Result<u64> {
-        // Duplicate check via binary search on in-memory index.
         if self.index_contains(record.hash) {
             return Err(ArcaneError::DuplicateRecord(
                 record.hash,
@@ -332,13 +322,10 @@ impl BucketStore {
         }
 
         let offset = self.write_pos;
-
-        // Encode fields.
         let field_bytes = bincode::serialize(&record.fields)?;
         let len = field_bytes.len() as u32;
-
-        // Build record bytes: [hash:8][alive:1][len:4][fields:len]
         let mut buf = Vec::with_capacity(13 + field_bytes.len());
+
         buf.extend_from_slice(&record.hash.to_le_bytes());
         buf.push(0x01);
         buf.extend_from_slice(&len.to_le_bytes());
@@ -346,26 +333,22 @@ impl BucketStore {
 
         self.data_file.seek(SeekFrom::Start(offset))?;
         self.data_file.write_all(&buf)?;
-        // No fsync here — WAL guarantees durability; data file is best-effort.
-
         self.write_pos += buf.len() as u64;
         self.record_count += 1;
 
-        // Update in-memory index (insertion-sort to keep sorted).
         let pos = self.index.partition_point(|e| e.0 < record.hash);
         self.index.insert(pos, (record.hash, offset));
 
-        // Append to index file (we re-sort on open anyway).
         let mut idx_file = OpenOptions::new()
             .write(true)
             .append(true)
             .open(&self.idx_path)?;
+
         let mut entry = [0u8; INDEX_ENTRY_SIZE];
         entry[0..8].copy_from_slice(&record.hash.to_le_bytes());
         entry[8..16].copy_from_slice(&offset.to_le_bytes());
         idx_file.write_all(&entry)?;
 
-        // Patch record_count into header.
         self.data_file.seek(SeekFrom::Start(8))?;
         self.data_file.write_all(&self.record_count.to_le_bytes())?;
 
@@ -395,7 +378,6 @@ impl BucketStore {
 
     /// Scan all live records.
     pub fn scan_all(&mut self) -> Result<Vec<Record>> {
-        // Use the index for ordered scan — avoids seeking around.
         let offsets: Vec<u64> = self.index.iter().map(|e| e.1).collect();
         let mut records = Vec::with_capacity(offsets.len());
         for off in offsets {
@@ -442,7 +424,7 @@ impl BucketStore {
         let mut h = vec![0u8; HEADER_SIZE as usize];
         h[0..8].copy_from_slice(MAGIC);
         h[8..16].copy_from_slice(&record_count.to_le_bytes());
-        h[16..18].copy_from_slice(&1u16.to_le_bytes()); // version
+        h[16..18].copy_from_slice(&1u16.to_le_bytes());
         h[18..20].copy_from_slice(&flags.to_le_bytes());
         h[32..40].copy_from_slice(&data_off.to_le_bytes());
         h
