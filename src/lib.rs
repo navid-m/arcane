@@ -8,6 +8,7 @@ pub mod engine;
 pub mod error;
 pub mod parser;
 pub mod server;
+pub mod storage;
 pub mod wal;
 
 pub use engine::{Config, Database, QueryResult};

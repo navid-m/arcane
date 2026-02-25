@@ -1,9 +1,7 @@
 use crate::error::{ArcaneError, Result};
-use memmap2::MmapMut;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub const MAGIC: &[u8; 8] = b"ARCANE01";
@@ -142,10 +140,6 @@ pub fn compute_hash(fields: &[Value]) -> u64 {
     h.digest()
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Index entry (on-disk: 16 bytes)
-// ────────────────────────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 struct IndexEntry {
@@ -155,20 +149,24 @@ struct IndexEntry {
 
 const INDEX_ENTRY_SIZE: usize = std::mem::size_of::<IndexEntry>();
 
-// ────────────────────────────────────────────────────────────────────────────
-// BucketStore — the core storage object for one bucket
-// ────────────────────────────────────────────────────────────────────────────
-
 pub struct BucketStore {
+    /// The schema of the bucket.
     pub schema: Schema,
-    data_path: PathBuf,
+
+    /// Path to the index file.
     idx_path: PathBuf,
+
     /// In-memory index: sorted Vec of (hash, file_offset).
-    /// Protected by the bucket-level RwLock on the BucketStore itself.
+    /// It's protected by the bucket-level RwLock on the BucketStore itself.
     index: Vec<(u64, u64)>,
+
+    /// The data file handle.
     data_file: File,
+
     /// Current write position in the data file.
     write_pos: u64,
+
+    /// The record count of the bucket.
     record_count: u64,
 }
 
