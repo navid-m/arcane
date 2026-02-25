@@ -149,7 +149,7 @@ impl Wal {
         buf.extend_from_slice(payload);
 
         let mut f = self.file.lock();
-        f.seek(SeekFrom::End(0))?;
+
         f.write_all(&buf)?;
 
         if !self.no_sync {
