@@ -3,7 +3,7 @@
 # Create a bucket with a schema
 create bucket Names (first_name: string, last_name: string)
 
-insert into Names (first_name: "Bob", last_name: "Marley", non_existent_field: "value")
+insert into Names (first_name: "Bob", last_name: "Marley", non_existent_field: "value", another_non_field: "yo")
 insert into Names ("Alice", "Cooper")
 insert into Names ("Bob", "Marley")
 insert into Names ("Alice", "Bentley")

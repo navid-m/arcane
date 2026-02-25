@@ -466,4 +466,42 @@ impl BucketStore {
         self.data_file.read_exact(&mut hdr)?;
         Ok(u64::from_le_bytes(hdr[32..40].try_into().unwrap()))
     }
+
+    /// Add a new field to the schema. Existing rows implicitly have Value::Null for this field.
+    pub fn add_field(&mut self, field: FieldDef) -> Result<()> {
+        self.schema.fields.push(field);
+        let new_schema_bytes = bincode::serialize(&self.schema)?;
+        let mut hdr = [0u8; HEADER_SIZE as usize];
+        self.data_file.seek(SeekFrom::Start(0))?;
+        self.data_file.read_exact(&mut hdr)?;
+
+        let old_schema_off = u64::from_le_bytes(hdr[24..32].try_into().unwrap());
+        let old_data_off = u64::from_le_bytes(hdr[32..40].try_into().unwrap());
+        let old_schema_len = old_data_off - old_schema_off;
+
+        if new_schema_bytes.len() as u64 > old_schema_len {
+            let new_data_off = old_schema_off + new_schema_bytes.len() as u64;
+            let data_len = self.write_pos - old_data_off;
+            let mut data_buf = vec![0u8; data_len as usize];
+
+            self.data_file.seek(SeekFrom::Start(old_data_off))?;
+            self.data_file.read_exact(&mut data_buf)?;
+            self.data_file.seek(SeekFrom::Start(old_schema_off))?;
+            self.data_file.write_all(&new_schema_bytes)?;
+            self.data_file.write_all(&data_buf)?;
+            self.write_pos = new_data_off + data_len;
+
+            hdr[32..40].copy_from_slice(&new_data_off.to_le_bytes());
+
+            self.data_file.seek(SeekFrom::Start(0))?;
+            self.data_file.write_all(&hdr)?;
+            self.rebuild_index(new_data_off)?;
+        } else {
+            self.data_file.seek(SeekFrom::Start(old_schema_off))?;
+            self.data_file.write_all(&new_schema_bytes)?;
+        }
+
+        self.data_file.flush()?;
+        Ok(())
+    }
 }

@@ -177,13 +177,13 @@ impl Database {
             fields,
         };
 
-        // WAL first.
         self.wal.append_create_bucket(&schema)?;
         self.wal.append_commit()?;
 
         let store = BucketStore::create(&self.dir, schema)?;
         self.buckets
             .insert(name.clone(), Arc::new(RwLock::new(store)));
+
         Ok(QueryResult::BucketCreated { name })
     }
 
@@ -192,6 +192,28 @@ impl Database {
             .buckets
             .get(&bucket)
             .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
+
+        let all_named = values.iter().all(|(name, _)| name.is_some());
+        if all_named {
+            let mut store = handle.write();
+            for (name, val) in &values {
+                let field_name = name.as_ref().unwrap();
+                if store.schema.field_index(field_name).is_none() {
+                    let ty = match val {
+                        Value::String(_) => crate::storage::FieldType::String,
+                        Value::Int(_) => crate::storage::FieldType::Int,
+                        Value::Float(_) => crate::storage::FieldType::Float,
+                        Value::Bool(_) => crate::storage::FieldType::Bool,
+                        Value::Bytes(_) => crate::storage::FieldType::Bytes,
+                        Value::Null => crate::storage::FieldType::String,
+                    };
+                    store.add_field(FieldDef {
+                        name: field_name.clone(),
+                        ty,
+                    })?;
+                }
+            }
+        }
 
         let fields_values = {
             let store = handle.read();
