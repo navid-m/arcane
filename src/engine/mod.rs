@@ -1,15 +1,13 @@
+use crate::error::{ArcaneError, Result};
+use crate::parser::{self, Filter, Projection, Statement};
+use crate::storage::{BucketStore, FieldDef, Record, Schema, Value};
+use crate::wal::{Wal, WalInsert};
+use dashmap::DashMap;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-use dashmap::DashMap;
-use parking_lot::RwLock;
-
-use crate::error::{ArcaneError, Result};
-use crate::parser::{self, Filter, Projection, Statement};
-use crate::storage::{compute_hash, BucketStore, FieldDef, FieldType, Record, Schema, Value};
-use crate::wal::{Wal, WalInsert};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -105,13 +103,12 @@ type BucketHandle = Arc<RwLock<BucketStore>>;
 
 pub struct Database {
     dir: PathBuf,
-    config: Config,
     buckets: DashMap<String, BucketHandle>,
     wal: Arc<Wal>,
 }
 
 impl Database {
-    pub fn open<P: AsRef<Path>>(dir: P, config: Config) -> Result<Arc<Self>> {
+    pub fn open<P: AsRef<Path>>(dir: P) -> Result<Arc<Self>> {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
         let wal = Arc::new(Wal::open(&dir)?);
@@ -134,7 +131,6 @@ impl Database {
 
         let db = Arc::new(Database {
             dir: dir.clone(),
-            config,
             buckets,
             wal,
         });

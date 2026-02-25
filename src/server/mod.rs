@@ -1,10 +1,10 @@
-use crate::engine::{Config, Database};
+use crate::engine::Database;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 pub async fn run(bind: &str, db_path: &str) -> std::io::Result<()> {
-    let db = Database::open(db_path, Config::default()).expect("Failed to open database");
+    let db = Database::open(db_path).expect("Failed to open database");
     let listener = TcpListener::bind(bind).await?;
     tracing::info!("Arcane server listening on {}", bind);
 

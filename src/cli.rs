@@ -1,4 +1,4 @@
-use arcane::engine::{Config, Database};
+use arcane::engine::Database;
 use clap::{Parser, Subcommand};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -35,7 +35,7 @@ fn main() {
         .init();
 
     let args = Args::parse();
-    let db = Database::open(&args.data, Config::default()).expect("Failed to open database");
+    let db = Database::open(&args.data).expect("Failed to open database");
 
     match args.command.unwrap_or(Cmd::Repl) {
         Cmd::Run { file } => {
