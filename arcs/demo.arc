@@ -6,10 +6,9 @@ create bucket Names (first_name: string, last_name: string);
 truncate Names;
 
 insert into Names (first_name: "Bob", last_name: "Marley", non_existent_field: "value", another_non_field: "yo");
-insert into Names ("Alice", "Cooper");
-insert into Names ("Bob", "Marley");
-insert into Names ("Alice", "Bentley");
 insert into Names (first_name: "Charlie", last_name: "Parker");
+insert into Names (first_name: "Charlie", last_name: "Brown");
+insert into Names (first_name: "Billy", last_name: "Bobby");
 
 # Get all rows
 get * from Names;
