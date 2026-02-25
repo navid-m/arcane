@@ -115,8 +115,8 @@ impl Wal {
         let seq = self.seq.fetch_add(1, Ordering::AcqRel) + 1;
         let crc = Self::crc(seq, ty as u8, payload);
         let len = payload.len() as u32;
-
         let mut buf = Vec::with_capacity(17 + payload.len());
+
         buf.extend_from_slice(&seq.to_le_bytes());
         buf.extend_from_slice(&crc.to_le_bytes());
         buf.push(ty as u8);
