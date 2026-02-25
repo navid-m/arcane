@@ -24,7 +24,6 @@ enum Cmd {
         /// Path to the .arc script
         file: PathBuf,
     },
-
     /// Start an interactive REPL
     Repl,
 }
