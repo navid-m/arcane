@@ -63,7 +63,6 @@ pub enum WalEntry {
 pub struct Wal {
     file: Mutex<File>,
     seq: AtomicU64,
-    path: std::path::PathBuf,
 }
 
 impl Wal {
@@ -78,7 +77,6 @@ impl Wal {
         let wal = Wal {
             file: Mutex::new(file),
             seq: AtomicU64::new(0),
-            path,
         };
         {
             let mut f = wal.file.lock();
