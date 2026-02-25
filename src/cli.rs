@@ -62,8 +62,7 @@ fn main() {
 
 fn repl(db: Arc<Database>) {
     println!("Arcane DBMS v0.1.0 — type AQL statements, one per line. Ctrl-D to exit.");
-    println!("Data directory: connected");
-    println!();
+    println!("Data directory: connected\n");
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
