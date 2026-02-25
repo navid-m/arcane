@@ -37,12 +37,12 @@ async fn handle_connection(mut stream: TcpStream, db: Arc<Database>) -> std::io:
         }
         match db.execute(trimmed) {
             Ok(result) => {
-                let msg = format!("OK\n{}END\n", result);
-                writer.write_all(msg.as_bytes()).await?;
+                writer
+                    .write_all(format!("OK\n{}END\n", result).as_bytes())
+                    .await?;
             }
             Err(e) => {
-                let msg = format!("ERR {}\n", e);
-                writer.write_all(msg.as_bytes()).await?;
+                writer.write_all(format!("ERR {}\n", e).as_bytes()).await?;
             }
         }
         writer.flush().await?;
