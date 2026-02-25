@@ -205,7 +205,12 @@ impl Database {
     /// Execute a pre-parsed statement.
     pub fn execute_stmt(&self, stmt: Statement) -> Result<QueryResult> {
         match stmt {
-            Statement::CreateBucket { name, fields } => self.create_bucket(name, fields),
+            Statement::CreateBucket {
+                name,
+                fields,
+                unique,
+                forced,
+            } => self.create_bucket(name, fields, unique, forced),
             Statement::Insert { bucket, values } => self.insert(bucket, values),
             Statement::BatchInsert { bucket, rows } => self.batch_insert(bucket, rows),
             Statement::Bulk { statements } => self.bulk(statements),
@@ -227,9 +232,24 @@ impl Database {
             .collect()
     }
 
-    fn create_bucket(&self, name: String, fields: Vec<FieldDef>) -> Result<QueryResult> {
+    fn create_bucket(
+        &self,
+        name: String,
+        fields: Vec<FieldDef>,
+        unique: bool,
+        forced: bool,
+    ) -> Result<QueryResult> {
         if self.buckets.contains_key(&name) {
-            return Err(ArcaneError::BucketExists(name));
+            if unique && !forced {
+                return Err(ArcaneError::BucketExists(name));
+            }
+            if forced {
+                self.buckets.remove(&name);
+                std::fs::remove_file(self.dir.join(format!("{}.arc", name)))?;
+                std::fs::remove_file(self.dir.join(format!("{}.arc.idx", name)))?;
+            } else {
+                return Err(ArcaneError::BucketExists(name));
+            }
         }
 
         let schema = Schema {

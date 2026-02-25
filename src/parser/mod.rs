@@ -24,6 +24,8 @@ pub enum Statement {
     CreateBucket {
         name: String,
         fields: Vec<FieldDef>,
+        unique: bool,
+        forced: bool,
     },
     Insert {
         bucket: String,
@@ -302,7 +304,7 @@ impl Parser {
         }
     }
 
-    fn parse_create_bucket(&mut self) -> Result<Statement> {
+    fn parse_create_bucket(&mut self, unique: bool, forced: bool) -> Result<Statement> {
         let name = self.expect_ident()?;
         self.expect_token(&Token::LParen)?;
         let mut fields = Vec::new();
@@ -324,7 +326,12 @@ impl Parser {
             }
         }
         self.expect_token(&Token::RParen)?;
-        Ok(Statement::CreateBucket { name, fields })
+        Ok(Statement::CreateBucket {
+            name,
+            fields,
+            unique,
+            forced,
+        })
     }
 
     fn parse_insert(&mut self) -> Result<Statement> {
@@ -557,14 +564,44 @@ impl Parser {
         let kw = self.expect_ident()?;
         match kw.to_lowercase().as_str() {
             "create" => {
+                let mut unique = false;
+                let mut forced = false;
+
+                loop {
+                    if let Token::Ident(ref s) = self.peek().clone() {
+                        match s.to_lowercase().as_str() {
+                            "unique" => {
+                                unique = true;
+                                self.advance();
+                            }
+                            "forced" => {
+                                forced = true;
+                                self.advance();
+                            }
+                            "bucket" => break,
+                            _ => {
+                                return Err(ArcaneError::ParseError {
+                                    pos: self.pos,
+                                    msg: format!(
+                                        "Expected 'bucket', 'unique', or 'forced', got '{}'",
+                                        s
+                                    ),
+                                })
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
                 let next = self.expect_ident()?;
                 if next.to_lowercase() != "bucket" {
                     return Err(ArcaneError::ParseError {
                         pos: self.pos,
-                        msg: format!("Expected 'bucket' after 'create', got '{}'", next),
+                        msg: format!("Expected 'bucket', got '{}'", next),
                     });
                 }
-                self.parse_create_bucket()
+                self.parse_create_bucket(unique, forced)
             }
             "insert" => self.parse_insert(),
             "bulk" => self.parse_bulk(),
@@ -636,11 +673,42 @@ mod tests {
     fn test_parse_create_bucket() {
         let stmt = parse_statement("create bucket Users (name: string, age: int)").unwrap();
         match stmt {
-            Statement::CreateBucket { name, fields } => {
+            Statement::CreateBucket {
+                name,
+                fields,
+                unique,
+                forced,
+            } => {
                 assert_eq!(name, "Users");
                 assert_eq!(fields.len(), 2);
                 assert_eq!(fields[0].name, "name");
                 assert_eq!(fields[1].name, "age");
+                assert!(!unique);
+                assert!(!forced);
+            }
+            _ => panic!("Expected CreateBucket"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_unique_bucket() {
+        let stmt = parse_statement("create unique bucket Users (name: string)").unwrap();
+        match stmt {
+            Statement::CreateBucket { unique, forced, .. } => {
+                assert!(unique);
+                assert!(!forced);
+            }
+            _ => panic!("Expected CreateBucket"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_forced_unique_bucket() {
+        let stmt = parse_statement("create forced unique bucket Users (name: string)").unwrap();
+        match stmt {
+            Statement::CreateBucket { unique, forced, .. } => {
+                assert!(unique);
+                assert!(forced);
             }
             _ => panic!("Expected CreateBucket"),
         }
