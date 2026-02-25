@@ -96,7 +96,6 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_string(&mut self) -> Result<Token> {
-        // Opening " already consumed.
         let mut s = String::new();
         loop {
             match self.advance() {
