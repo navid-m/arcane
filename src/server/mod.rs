@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
+/// Run the server.
 pub async fn run(bind: &str, db_path: &str) -> std::io::Result<()> {
     let db = Database::open(db_path).expect("Failed to open database");
     let listener = TcpListener::bind(bind).await?;
@@ -20,6 +21,7 @@ pub async fn run(bind: &str, db_path: &str) -> std::io::Result<()> {
     }
 }
 
+/// Handle some given connection asynchronously.
 async fn handle_connection(mut stream: TcpStream, db: Arc<Database>) -> std::io::Result<()> {
     let (reader, mut writer) = stream.split();
     let mut reader = BufReader::new(reader);
