@@ -402,7 +402,6 @@ mod tests {
         wal.append_commit().unwrap();
         wal.append_commit().unwrap();
         wal.append_commit().unwrap();
-
         wal.truncate().unwrap();
 
         let entries = Wal::replay(dir.path()).unwrap();
