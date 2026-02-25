@@ -404,7 +404,6 @@ impl Database {
 
     fn resolve_values(schema: &Schema, values: &[(Option<String>, Value)]) -> Result<Vec<Value>> {
         let n = schema.fields.len();
-
         let all_named = values.iter().all(|(name, _)| name.is_some());
         let all_pos = values.iter().all(|(name, _)| name.is_none());
 
