@@ -329,8 +329,8 @@ mod tests {
     fn test_wal_append_checkpoint() {
         let dir = TempDir::new().unwrap();
         let wal = Wal::open(dir.path()).unwrap();
-
         let seq = wal.append_checkpoint().unwrap();
+
         assert_eq!(seq, 1);
     }
 
@@ -338,7 +338,6 @@ mod tests {
     fn test_wal_sequence_increment() {
         let dir = TempDir::new().unwrap();
         let wal = Wal::open(dir.path()).unwrap();
-
         let seq1 = wal.append_commit().unwrap();
         let seq2 = wal.append_commit().unwrap();
         let seq3 = wal.append_commit().unwrap();
@@ -354,7 +353,6 @@ mod tests {
 
         {
             let wal = Wal::open(dir.path()).unwrap();
-
             let schema = Schema {
                 bucket_name: "TestBucket".into(),
                 fields: vec![FieldDef {
@@ -362,6 +360,7 @@ mod tests {
                     ty: FieldType::String,
                 }],
             };
+
             wal.append_create_bucket(&schema).unwrap();
 
             let insert = WalInsert {
@@ -369,6 +368,7 @@ mod tests {
                 hash: 0x1234,
                 fields: vec![Value::String("test".into())],
             };
+
             wal.append_insert(&insert).unwrap();
             wal.append_commit().unwrap();
         }
