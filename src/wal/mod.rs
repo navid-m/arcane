@@ -172,7 +172,9 @@ impl Wal {
         Ok(seq)
     }
 
-    /// Replay WAL entries for recovery. Returns entries since last Checkpoint.
+    /// Replay WAL entries for recovery.
+    ///
+    /// Returns entries since last Checkpoint.
     pub fn replay(dir: &Path) -> Result<Vec<WalEntry>> {
         let path = dir.join("arcane.wal");
         if !path.exists() {
