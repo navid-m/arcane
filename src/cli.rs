@@ -3,6 +3,7 @@
 //! License: GPL-3.0-only
 
 use arcane::engine::Database;
+use arcane::meta::show_version;
 use clap::{Parser, Subcommand};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -10,7 +11,7 @@ use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "arcane-cli", about = "ArcaneDB Commandline Interface")]
+#[command(name = "arcc", about = "ArcaneDB Commandline Interface")]
 struct Args {
     /// Database directory
     #[arg(short, long, default_value = "./arcane_data")]
@@ -19,6 +20,10 @@ struct Args {
     /// Command to execute
     #[command(subcommand)]
     command: Option<Cmd>,
+
+    /// Show the version
+    #[arg(short, long)]
+    version: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -38,6 +43,12 @@ fn main() {
         .init();
 
     let args = Args::parse();
+
+    if args.version {
+        show_version();
+        return;
+    }
+
     let db = Database::open(&args.data).expect("Failed to open database");
 
     match args.command.unwrap_or(Cmd::Repl) {

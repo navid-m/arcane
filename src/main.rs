@@ -2,6 +2,7 @@
 //!
 //! License: GPL-3.0-only
 
+use arcane::meta::show_version;
 use arcane::server;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -20,11 +21,20 @@ struct Args {
     /// Log level (trace, debug, info, warn, error)
     #[arg(short, long, default_value = "info")]
     log: String,
+
+    /// Show the version
+    #[arg(short, long)]
+    version: bool,
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+
+    if args.version {
+        show_version();
+        return;
+    }
 
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::new(&args.log))

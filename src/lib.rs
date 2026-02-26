@@ -4,6 +4,7 @@
 
 pub mod engine;
 pub mod error;
+pub mod meta;
 pub mod parser;
 pub mod server;
 pub mod storage;
