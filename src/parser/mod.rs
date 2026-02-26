@@ -1498,7 +1498,7 @@ mod tests {
         match stmt {
             Statement::Get { filter, .. } => {
                 assert!(filter.is_some());
-                // Should be And(And(Like, Gt), Eq)
+
                 match filter.unwrap() {
                     Filter::And(left, right) => {
                         match *left {
