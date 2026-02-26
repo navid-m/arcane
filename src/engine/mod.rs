@@ -461,7 +461,18 @@ impl Database {
             .get(&bucket)
             .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
         let mut store = handle.write();
-        let schema = store.schema.clone();
+        let schema = store.schema.clone();     
+        let all_named = values.iter().all(|(name, _)| name.is_some());
+        
+        if all_named {
+            for (name, _) in &values {
+                let field_name = name.as_ref().unwrap();
+                if schema.field_index(field_name).is_none() {
+                    return Err(ArcaneError::UnknownField(field_name.clone()));
+                }
+            }
+        }
+        
         let filter_idx = schema
             .field_index(&filter.field)
             .ok_or_else(|| ArcaneError::UnknownField(filter.field.clone()))?;
@@ -476,7 +487,6 @@ impl Database {
 
                 let mut new_fields = old_record.fields.clone();
                 
-                let all_named = values.iter().all(|(name, _)| name.is_some());
                 if all_named {
                     for (name, val) in &values {
                         let field_name = name.as_ref().unwrap();
@@ -1021,4 +1031,179 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_set_update_single_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+        db.execute("insert into Users (\"Bob\", 25)").unwrap();
+
+        let result = db
+            .execute("set Users (age: 31) where name = \"Alice\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Updated { bucket, count } => {
+                assert_eq!(bucket, "Users");
+                assert_eq!(count, 1);
+            }
+            _ => panic!("Expected Updated"),
+        }
+
+        let result = db.execute("get * from Users where name = \"Alice\"").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][2], "31"); // age field
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_set_update_multiple_fields() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int, city: string)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30, \"NYC\")").unwrap();
+
+        let result = db
+            .execute("set Users (name: \"Alicia\", age: 31, city: \"LA\") where name = \"Alice\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Updated { count, .. } => {
+                assert_eq!(count, 1);
+            }
+            _ => panic!("Expected Updated"),
+        }
+
+        let result = db.execute("get * from Users").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "Alicia");
+                assert_eq!(rows[0][2], "31");
+                assert_eq!(rows[0][3], "LA");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_set_update_multiple_rows() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+        db.execute("insert into Users (\"Bob\", 30)").unwrap();
+        db.execute("insert into Users (\"Charlie\", 25)").unwrap();
+
+        let result = db
+            .execute("set Users (age: 31) where age = 30")
+            .unwrap();
+
+        match result {
+            QueryResult::Updated { count, .. } => {
+                assert_eq!(count, 2);
+            }
+            _ => panic!("Expected Updated"),
+        }
+
+        let result = db.execute("get * from Users where age = 31").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_set_unknown_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+
+        let result = db.execute("set Users (name: \"Bob\", random_bullshit_column: 12345) where name = \"Alice\"");
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ArcaneError::UnknownField(_)));
+    }
+
+    #[test]
+    fn test_set_type_mismatch() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+
+        let result = db.execute("set Users (age: \"not a number\") where name = \"Alice\"");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_no_matches() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+
+        let result = db
+            .execute("set Users (age: 40) where name = \"Bob\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Updated { count, .. } => {
+                assert_eq!(count, 0);
+            }
+            _ => panic!("Expected Updated"),
+        }
+    }
+
+    #[test]
+    fn test_set_positional() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+
+        let result = db
+            .execute("set Users (\"Bob\", 35) where name = \"Alice\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Updated { count, .. } => {
+                assert_eq!(count, 1);
+            }
+            _ => panic!("Expected Updated"),
+        }
+
+        let result = db.execute("get * from Users").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "Bob");
+                assert_eq!(rows[0][2], "35");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_set_bucket_not_found() {
+        let (db, _dir) = setup_db();
+        let result = db.execute("set NonExistent (name: \"test\") where id = 1");
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ArcaneError::BucketNotFound(_)
+        ));
+    }
 }
+

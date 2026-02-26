@@ -1024,4 +1024,50 @@ mod tests {
         assert!(matches!(tokens[1], Token::Bool(false)));
         assert!(matches!(tokens[2], Token::Null));
     }
+
+    #[test]
+    fn test_parse_set_named() {
+        let stmt = parse_statement("set Users (name: \"Bob\", age: 35) where name = \"Alice\"").unwrap();
+        match stmt {
+            Statement::Set { bucket, values, filter } => {
+                assert_eq!(bucket, "Users");
+                assert_eq!(values.len(), 2);
+                assert_eq!(values[0].0.as_ref().unwrap(), "name");
+                assert_eq!(values[1].0.as_ref().unwrap(), "age");
+                assert_eq!(filter.field, "name");
+            }
+            _ => panic!("Expected Set"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_positional() {
+        let stmt = parse_statement("set Users (\"Bob\", 35) where id = 1").unwrap();
+        match stmt {
+            Statement::Set { bucket, values, filter } => {
+                assert_eq!(bucket, "Users");
+                assert_eq!(values.len(), 2);
+                assert!(values[0].0.is_none());
+                assert!(values[1].0.is_none());
+                assert_eq!(filter.field, "id");
+            }
+            _ => panic!("Expected Set"),
+        }
+    }
+
+    #[test]
+    fn test_parse_commit() {
+        let stmt = parse_statement("commit!").unwrap();
+        assert!(matches!(stmt, Statement::Commit));
+    }
+
+    #[test]
+    fn test_lexer_exclamation_in_ident() {
+        let tokens = Lexer::new("commit!").tokenize().unwrap();
+        match &tokens[0] {
+            Token::Ident(s) => assert_eq!(s, "commit!"),
+            _ => panic!("Expected identifier with !"),
+        }
+    }
 }
+
