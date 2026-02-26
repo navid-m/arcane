@@ -108,7 +108,7 @@ impl std::fmt::Display for Value {
             Value::Float(v) => write!(f, "{}", v),
             Value::Bool(b) => write!(f, "{}", b),
             Value::Bytes(b) => write!(f, "<{} bytes>", b.len()),
-            Value::Null => write!(f, "NULL"),
+            Value::Null => write!(f, "__null__"),
         }
     }
 }
