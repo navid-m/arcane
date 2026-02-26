@@ -7,7 +7,7 @@ use tokio::net::{TcpListener, TcpStream};
 pub async fn run(bind: &str, db_path: &str) -> std::io::Result<()> {
     let db = Database::open(db_path).expect("Failed to open database");
     let listener = TcpListener::bind(bind).await?;
-    tracing::info!("Arcane server listening on {}", bind);
+    tracing::info!("Arcane listening on {}", bind);
 
     loop {
         let (stream, addr) = listener.accept().await?;

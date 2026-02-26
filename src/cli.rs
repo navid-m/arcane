@@ -75,7 +75,10 @@ fn main() {
 }
 
 fn repl(db: Arc<Database>) {
-    println!("Arcane v0.1.0 — Type AQL statements, one per line. Ctrl-D to exit.");
+    println!(
+        "Arcane v{} — Type AQL statements, one per line. Ctrl-D to exit.",
+        option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
+    );
     println!("DDIR: Connected.\n");
 
     let stdin = io::stdin();
