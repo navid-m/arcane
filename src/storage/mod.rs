@@ -317,9 +317,11 @@ impl BucketStore {
 
         while pos < file_len {
             let mut rec_hdr = [0u8; 13];
+
             if self.data_file.read_exact(&mut rec_hdr).is_err() {
                 break;
             }
+
             let hash = u64::from_le_bytes(rec_hdr[0..8].try_into().unwrap());
             let alive = rec_hdr[8];
             let len = u32::from_le_bytes(rec_hdr[9..13].try_into().unwrap()) as u64;
