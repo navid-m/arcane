@@ -5,7 +5,7 @@ pub fn show_version() {
 
 /// Get the version string of Arcane.
 pub fn get_version() -> String {
-    return option_env!("CARGO_PKG_VERSION")
+    option_env!("CARGO_PKG_VERSION")
         .unwrap_or("-Unknown")
-        .to_owned();
+        .to_owned()
 }
