@@ -42,6 +42,7 @@ pub enum Statement {
         bucket: String,
         projection: Projection,
         filter: Option<Filter>,
+        order_by: Option<OrderBy>,
     },
     Delete {
         bucket: String,
@@ -65,6 +66,18 @@ pub enum Projection {
     Head(usize),
     Tail(usize),
     Fields(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SortOrder {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone)]
+pub struct OrderBy {
+    pub field: String,
+    pub order: SortOrder,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -575,24 +588,57 @@ impl Parser {
         }
 
         let bucket = self.expect_ident()?;
-        let filter = if let Token::Ident(ref kw) = self.peek().clone() {
+        
+        let mut filter = None;
+        let mut order_by = None;
+        
+        if let Token::Ident(ref kw) = self.peek().clone() {
             if kw.to_lowercase() == "where" {
                 self.advance();
                 let field = self.expect_ident()?;
                 let op = self.parse_compare_op()?;
                 let value = self.parse_literal()?;
-                Some(Filter { field, op, value })
-            } else {
-                None
+                filter = Some(Filter { field, op, value });
             }
-        } else {
-            None
-        };
+        }
+        
+        if let Token::Ident(ref kw) = self.peek().clone() {
+            if kw.to_lowercase() == "order" {
+                self.advance();
+                let by_kw = self.expect_ident()?;
+                if by_kw.to_lowercase() != "by" {
+                    return Err(ArcaneError::ParseError {
+                        pos: self.pos,
+                        msg: format!("Expected 'by' after 'order', got '{}'", by_kw),
+                    });
+                }
+                let field = self.expect_ident()?;
+                
+                let order = if let Token::Ident(ref ord) = self.peek().clone() {
+                    match ord.to_lowercase().as_str() {
+                        "asc" => {
+                            self.advance();
+                            SortOrder::Asc
+                        }
+                        "desc" => {
+                            self.advance();
+                            SortOrder::Desc
+                        }
+                        _ => SortOrder::Asc, 
+                    }
+                } else {
+                    SortOrder::Asc 
+                };
+                
+                order_by = Some(OrderBy { field, order });
+            }
+        }
 
         Ok(Statement::Get {
             bucket,
             projection,
             filter,
+            order_by,
         })
     }
 
@@ -923,10 +969,12 @@ mod tests {
                 bucket,
                 projection,
                 filter,
+                order_by,
             } => {
                 assert_eq!(bucket, "Users");
                 assert!(matches!(projection, Projection::Star));
                 assert!(filter.is_none());
+                assert!(order_by.is_none());
             }
             _ => panic!("Expected Get"),
         }
@@ -940,10 +988,12 @@ mod tests {
                 bucket,
                 projection,
                 filter,
+                order_by,
             } => {
                 assert_eq!(bucket, "Users");
                 assert!(matches!(projection, Projection::Star));
                 assert!(filter.is_some());
+                assert!(order_by.is_none());
                 let f = filter.unwrap();
                 assert_eq!(f.field, "name");
             }
@@ -1089,10 +1139,11 @@ mod tests {
     fn test_parse_get_single_field() {
         let stmt = parse_statement("get name from Users").unwrap();
         match stmt {
-            Statement::Get { bucket, projection, filter } => {
+            Statement::Get { bucket, projection, filter, order_by } => {
                 assert_eq!(bucket, "Users");
                 assert!(matches!(projection, Projection::Fields(ref fields) if fields.len() == 1 && fields[0] == "name"));
                 assert!(filter.is_none());
+                assert!(order_by.is_none());
             }
             _ => panic!("Expected Get"),
         }
@@ -1102,7 +1153,7 @@ mod tests {
     fn test_parse_get_multiple_fields() {
         let stmt = parse_statement("get name, age, city from Users").unwrap();
         match stmt {
-            Statement::Get { bucket, projection, filter } => {
+            Statement::Get { bucket, projection, filter, order_by } => {
                 assert_eq!(bucket, "Users");
                 match projection {
                     Projection::Fields(fields) => {
@@ -1114,6 +1165,7 @@ mod tests {
                     _ => panic!("Expected Fields projection"),
                 }
                 assert!(filter.is_none());
+                assert!(order_by.is_none());
             }
             _ => panic!("Expected Get"),
         }
@@ -1123,10 +1175,75 @@ mod tests {
     fn test_parse_get_field_with_filter() {
         let stmt = parse_statement("get name from Users where age > 20").unwrap();
         match stmt {
-            Statement::Get { bucket, projection, filter } => {
+            Statement::Get { bucket, projection, filter, order_by } => {
                 assert_eq!(bucket, "Users");
                 assert!(matches!(projection, Projection::Fields(ref fields) if fields.len() == 1));
                 assert!(filter.is_some());
+                assert!(order_by.is_none());
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_with_order_by_asc() {
+        let stmt = parse_statement("get * from Users order by age asc").unwrap();
+        match stmt {
+            Statement::Get { bucket, projection, filter, order_by } => {
+                assert_eq!(bucket, "Users");
+                assert!(matches!(projection, Projection::Star));
+                assert!(filter.is_none());
+                assert!(order_by.is_some());
+                let order = order_by.unwrap();
+                assert_eq!(order.field, "age");
+                assert_eq!(order.order, SortOrder::Asc);
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_with_order_by_desc() {
+        let stmt = parse_statement("get * from Users order by name desc").unwrap();
+        match stmt {
+            Statement::Get { bucket, projection, filter, order_by } => {
+                assert_eq!(bucket, "Users");
+                assert!(matches!(projection, Projection::Star));
+                assert!(filter.is_none());
+                assert!(order_by.is_some());
+                let order = order_by.unwrap();
+                assert_eq!(order.field, "name");
+                assert_eq!(order.order, SortOrder::Desc);
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_with_filter_and_order_by() {
+        let stmt = parse_statement("get * from Users where age > 20 order by name asc").unwrap();
+        match stmt {
+            Statement::Get { bucket, projection, filter, order_by } => {
+                assert_eq!(bucket, "Users");
+                assert!(matches!(projection, Projection::Star));
+                assert!(filter.is_some());
+                assert!(order_by.is_some());
+                let order = order_by.unwrap();
+                assert_eq!(order.field, "name");
+                assert_eq!(order.order, SortOrder::Asc);
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_order_by_default_asc() {
+        let stmt = parse_statement("get * from Users order by age").unwrap();
+        match stmt {
+            Statement::Get { order_by, .. } => {
+                assert!(order_by.is_some());
+                let order = order_by.unwrap();
+                assert_eq!(order.order, SortOrder::Asc);
             }
             _ => panic!("Expected Get"),
         }

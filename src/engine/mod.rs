@@ -236,7 +236,8 @@ impl Database {
                 bucket,
                 projection,
                 filter,
-            } => self.get(bucket, projection, filter),
+                order_by,
+            } => self.get(bucket, projection, filter, order_by),
             Statement::Commit => self.commit(),
         }
     }
@@ -570,6 +571,28 @@ impl Database {
         }
     }
 
+    fn compare_values_for_sort(left: &Value, right: &Value) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (left, right) {
+            (Value::Int(a), Value::Int(b)) => a.cmp(b),
+            (Value::Float(a), Value::Float(b)) => {
+                a.partial_cmp(b).unwrap_or(Ordering::Equal)
+            }
+            (Value::Int(a), Value::Float(b)) => {
+                (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
+            }
+            (Value::Float(a), Value::Int(b)) => {
+                a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal)
+            }
+            (Value::String(a), Value::String(b)) => a.cmp(b),
+            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            (Value::Null, Value::Null) => Ordering::Equal,
+            (Value::Null, _) => Ordering::Less,
+            (_, Value::Null) => Ordering::Greater,
+            _ => Ordering::Equal,
+        }
+    }
+
     fn truncate(&self, bucket: String) -> Result<QueryResult> {
         let handle = self
             .buckets
@@ -587,6 +610,7 @@ impl Database {
         bucket: String,
         projection: Projection,
         filter: Option<Filter>,
+        order_by: Option<parser::OrderBy>,
     ) -> Result<QueryResult> {
         let handle = self
             .buckets
@@ -605,6 +629,23 @@ impl Database {
                 r.fields
                     .get(idx)
                     .map_or(false, |v| Self::compare_values(v, &f.op, &f.value))
+            });
+        }
+
+        if let Some(ref order) = order_by {
+            let sort_idx = schema
+                .field_index(&order.field)
+                .ok_or_else(|| ArcaneError::UnknownField(order.field.clone()))?;
+            
+            records.sort_by(|a, b| {
+                let val_a = &a.fields[sort_idx];
+                let val_b = &b.fields[sort_idx];
+                let cmp = Self::compare_values_for_sort(val_a, val_b);
+                
+                match order.order {
+                    parser::SortOrder::Asc => cmp,
+                    parser::SortOrder::Desc => cmp.reverse(),
+                }
             });
         }
 
@@ -1313,6 +1354,137 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ArcaneError::UnknownField(_)));
     }
+
+    #[test]
+    fn test_get_order_by_asc() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Charlie\", 35)").unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+        db.execute("insert into Users (\"Bob\", 25)").unwrap();
+
+        let result = db.execute("get * from Users order by age asc").unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 3);
+                assert_eq!(rows[0][2], "25"); // Bob
+                assert_eq!(rows[1][2], "30"); // Alice
+                assert_eq!(rows[2][2], "35"); // Charlie
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_order_by_desc() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Charlie\", 35)").unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+        db.execute("insert into Users (\"Bob\", 25)").unwrap();
+
+        let result = db.execute("get * from Users order by age desc").unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 3);
+                assert_eq!(rows[0][2], "35"); // Charlie
+                assert_eq!(rows[1][2], "30"); // Alice
+                assert_eq!(rows[2][2], "25"); // Bob
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_order_by_string() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Charlie\", 35)").unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+        db.execute("insert into Users (\"Bob\", 25)").unwrap();
+
+        let result = db.execute("get * from Users order by name asc").unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 3);
+                assert_eq!(rows[0][1], "Alice");
+                assert_eq!(rows[1][1], "Bob");
+                assert_eq!(rows[2][1], "Charlie");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_order_by_with_filter() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Charlie\", 35)").unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+        db.execute("insert into Users (\"Bob\", 25)").unwrap();
+        db.execute("insert into Users (\"Diana\", 40)").unwrap();
+
+        let result = db
+            .execute("get * from Users where age > 26 order by age asc")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 3);
+                assert_eq!(rows[0][1], "Alice"); // 30
+                assert_eq!(rows[1][1], "Charlie"); // 35
+                assert_eq!(rows[2][1], "Diana"); // 40
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_order_by_unknown_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+
+        let result = db.execute("get * from Users order by nonexistent asc");
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ArcaneError::UnknownField(_)));
+    }
+
+    #[test]
+    fn test_get_order_by_with_field_projection() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int, city: string)")
+            .unwrap();
+        db.execute("insert into Users (\"Charlie\", 35, \"NYC\")").unwrap();
+        db.execute("insert into Users (\"Alice\", 30, \"LA\")").unwrap();
+        db.execute("insert into Users (\"Bob\", 25, \"SF\")").unwrap();
+
+        let result = db.execute("get name, age from Users order by age desc").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 2);
+                assert_eq!(schema[0], "name");
+                assert_eq!(schema[1], "age");
+                assert_eq!(rows.len(), 3);
+                assert_eq!(rows[0][0], "Charlie");
+                assert_eq!(rows[0][1], "35");
+                assert_eq!(rows[1][0], "Alice");
+                assert_eq!(rows[2][0], "Bob");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
 }
+
 
 
