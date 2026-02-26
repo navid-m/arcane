@@ -132,6 +132,19 @@ impl Wal {
         Ok(seq)
     }
 
+    pub fn force_sync(&self) -> Result<()> {
+        if !self.no_sync {
+            let mut f = self.file.lock();
+            f.flush()?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::io::AsRawFd;
+                libc_fdatasync(f.as_raw_fd());
+            }
+        }
+        Ok(())
+    }
+
     pub fn append_checkpoint(&self) -> Result<u64> {
         self.write_entry(EntryType::Checkpoint, &[])
     }

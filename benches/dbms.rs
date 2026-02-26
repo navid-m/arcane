@@ -78,6 +78,7 @@ fn bench_insert_positional(c: &mut Criterion) {
                     let data = random_string(sz);
                     db.execute(&format!("insert into Bench (\"{}\")", data))
                         .unwrap();
+                    db.execute("commit!").unwrap();
                 });
             },
         );
@@ -101,6 +102,7 @@ fn bench_insert_named(c: &mut Criterion) {
                 thread_rng().gen_range(18..80)
             ))
             .unwrap();
+            db.execute("commit!").unwrap();
         });
     });
     group.finish();
@@ -132,6 +134,7 @@ fn bench_bulk_insert(c: &mut Criterion) {
                             ))
                             .unwrap();
                         }
+                        db.execute("commit!").unwrap();
                     },
                     criterion::BatchSize::SmallInput,
                 );
@@ -162,6 +165,7 @@ fn bench_scan_all(c: &mut Criterion) {
                     ))
                     .unwrap();
                 }
+                db.execute("commit!").unwrap();
 
                 b.iter(|| {
                     black_box(db.execute("get * from Scan").unwrap());
@@ -198,6 +202,7 @@ fn bench_hash_lookup(c: &mut Criterion) {
                         hashes.push(hash);
                     }
                 }
+                db.execute("commit!").unwrap();
 
                 b.iter(|| {
                     black_box(
@@ -230,6 +235,7 @@ fn bench_filter_scan(c: &mut Criterion) {
                     db.execute(&format!("insert into Filter (\"{}\", {})", cat, i))
                         .unwrap();
                 }
+                db.execute("commit!").unwrap();
 
                 b.iter(|| {
                     black_box(
@@ -256,6 +262,7 @@ fn bench_schema_evolution(c: &mut Criterion) {
             |(db, _dir)| {
                 db.execute("insert into Evolve (field1: \"test\", new_field: \"value\")")
                     .unwrap();
+                db.execute("commit!").unwrap();
             },
             criterion::BatchSize::SmallInput,
         );
@@ -274,11 +281,13 @@ fn bench_schema_evolution(c: &mut Criterion) {
                             db.execute(&format!("insert into Evolve (\"data_{}\")", i))
                                 .unwrap();
                         }
+                        db.execute("commit!").unwrap();
                         (db, dir)
                     },
                     |(db, _dir)| {
                         db.execute("insert into Evolve (field1: \"test\", new_field: \"value\")")
                             .unwrap();
+                        db.execute("commit!").unwrap();
                     },
                     criterion::BatchSize::SmallInput,
                 );
@@ -304,6 +313,7 @@ fn bench_duplicate_detection(c: &mut Criterion) {
                     db.execute(&format!("insert into Dups (\"unique_{}\")", i))
                         .unwrap();
                 }
+                db.execute("commit!").unwrap();
 
                 b.iter(|| {
                     let _ = db.execute("insert into Dups (\"unique_0\")");
@@ -331,6 +341,7 @@ fn bench_mixed_workload(c: &mut Criterion) {
             ))
             .unwrap();
         }
+        db.execute("commit!").unwrap();
 
         b.iter(|| {
             for i in 0..50 {
@@ -341,6 +352,7 @@ fn bench_mixed_workload(c: &mut Criterion) {
                 ))
                 .unwrap();
             }
+            db.execute("commit!").unwrap();
             for _ in 0..50 {
                 black_box(db.execute("get head(10) from Mixed").unwrap());
             }

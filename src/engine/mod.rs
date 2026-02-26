@@ -65,6 +65,7 @@ pub enum QueryResult {
         rows: Vec<Vec<String>>,
     },
     Hashes(Vec<u64>),
+    Committed,
     Empty,
 }
 
@@ -96,6 +97,9 @@ impl fmt::Display for QueryResult {
             }
             QueryResult::Truncated { bucket } => {
                 writeln!(f, "Truncated bucket '{}'.", bucket)
+            }
+            QueryResult::Committed => {
+                writeln!(f, "Committed.")
             }
             QueryResult::Rows { schema, rows } => {
                 if rows.is_empty() {
@@ -221,6 +225,7 @@ impl Database {
                 projection,
                 filter,
             } => self.get(bucket, projection, filter),
+            Statement::Commit => self.commit(),
         }
     }
 
@@ -259,7 +264,6 @@ impl Database {
 
         if !self.config.no_wal {
             self.wal.append_create_bucket(&schema)?;
-            self.wal.append_commit()?;
         }
 
         let store = BucketStore::create(&self.dir, schema)?;
@@ -327,7 +331,6 @@ impl Database {
 
         if !self.config.no_wal {
             self.wal.append_insert(&wal_entry)?;
-            self.wal.append_commit()?;
         }
 
         let hash = {
@@ -382,10 +385,6 @@ impl Database {
             }
 
             records.push(record);
-        }
-
-        if !self.config.no_wal {
-            self.wal.append_commit()?;
         }
 
         let count = {
@@ -544,6 +543,14 @@ impl Database {
             schema: col_names,
             rows,
         })
+    }
+
+    fn commit(&self) -> Result<QueryResult> {
+        if !self.config.no_wal {
+            self.wal.append_commit()?;
+            self.wal.force_sync()?;
+        }
+        Ok(QueryResult::Committed)
     }
 
     fn resolve_values(schema: &Schema, values: &[(Option<String>, Value)]) -> Result<Vec<Value>> {

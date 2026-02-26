@@ -7,6 +7,7 @@ insert into Names (first_name: "Bob", last_name: "Marley", non_existent_field: "
 insert into Names (first_name: "Charlie", last_name: "Parker");
 insert into Names (first_name: "Charlie", last_name: "Brown");
 insert into Names (first_name: "Billy", last_name: "Bobby");
+commit!;
 
 # Get all rows
 get * from Names;
@@ -29,6 +30,7 @@ truncate Products;
 insert into Products (name: "Widget", price: 9.99, in_stock: true);
 insert into Products (name: "Gadget", price: 24.99, in_stock: false);
 insert into Products (name: "Doohickey", price: 4.49, in_stock: true);
+commit!;
 
 delete from Products where name = "Doohickey";
 

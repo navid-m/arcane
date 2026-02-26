@@ -50,6 +50,7 @@ pub enum Statement {
     Truncate {
         bucket: String,
     },
+    Commit,
 }
 
 #[derive(Debug, Clone)]
@@ -184,7 +185,7 @@ impl<'a> Lexer<'a> {
     fn read_ident(&mut self, first: char) -> Token {
         let mut s = String::from(first);
         while let Some(c) = self.peek_char() {
-            if c.is_alphanumeric() || c == '_' {
+            if c.is_alphanumeric() || c == '_' || c == '!' {
                 s.push(c);
                 self.advance();
             } else {
@@ -670,6 +671,7 @@ impl Parser {
                 let bucket = self.expect_ident()?;
                 Ok(Statement::Truncate { bucket })
             }
+            "commit!" => Ok(Statement::Commit),
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,
                 msg: format!("Unknown statement keyword: '{}'", other),

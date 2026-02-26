@@ -9,4 +9,6 @@ insert into TestBatch2 (
 
 delete from TestBatch2 where age >= 30;
 
+commit!;
+
 get * from TestBatch2;
