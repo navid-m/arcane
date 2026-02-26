@@ -784,6 +784,151 @@ impl Database {
                 let skip = records.len().saturating_sub(n);
                 records = records.into_iter().skip(skip).collect();
             }
+            Projection::Aggregates(ref agg_funcs) => {
+                use crate::parser::AggregateFunc;
+                
+                let mut col_names = Vec::new();
+                let mut values = Vec::new();
+
+                for agg in agg_funcs {
+                    let (field_name, func_name) = match agg {
+                        AggregateFunc::Avg(f) => (f, "avg"),
+                        AggregateFunc::Sum(f) => (f, "sum"),
+                        AggregateFunc::Min(f) => (f, "min"),
+                        AggregateFunc::Max(f) => (f, "max"),
+                        AggregateFunc::Median(f) => (f, "median"),
+                    };
+
+                    let field_idx = schema
+                        .field_index(field_name)
+                        .ok_or_else(|| ArcaneError::UnknownField(field_name.clone()))?;
+
+                    col_names.push(format!("{}({})", func_name, field_name));
+
+                    let result = match agg {
+                        AggregateFunc::Avg(_) => {
+                            let mut sum = 0.0;
+                            let mut count = 0;
+                            for record in &records {
+                                match &record.fields[field_idx] {
+                                    Value::Int(i) => {
+                                        sum += *i as f64;
+                                        count += 1;
+                                    }
+                                    Value::Float(f) => {
+                                        sum += f;
+                                        count += 1;
+                                    }
+                                    Value::Null => {}
+                                    _ => {
+                                        return Err(ArcaneError::Other(format!(
+                                            "Cannot compute avg/mean on non-numeric field '{}'",
+                                            field_name
+                                        )))
+                                    }
+                                }
+                            }
+                            if count == 0 {
+                                "NULL".to_string()
+                            } else {
+                                format!("{:.2}", sum / count as f64)
+                            }
+                        }
+                        AggregateFunc::Sum(_) => {
+                            let mut sum = 0.0;
+                            for record in &records {
+                                match &record.fields[field_idx] {
+                                    Value::Int(i) => sum += *i as f64,
+                                    Value::Float(f) => sum += f,
+                                    Value::Null => {}
+                                    _ => {
+                                        return Err(ArcaneError::Other(format!(
+                                            "Cannot compute sum on non-numeric field '{}'",
+                                            field_name
+                                        )))
+                                    }
+                                }
+                            }
+                            format!("{:.2}", sum)
+                        }
+                        AggregateFunc::Min(_) => {
+                            let mut min_val: Option<Value> = None;
+                            for record in &records {
+                                let val = &record.fields[field_idx];
+                                if matches!(val, Value::Null) {
+                                    continue;
+                                }
+                                match &min_val {
+                                    None => min_val = Some(val.clone()),
+                                    Some(current_min) => {
+                                        if Self::compare_values_for_sort(val, current_min)
+                                            == std::cmp::Ordering::Less
+                                        {
+                                            min_val = Some(val.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            min_val.map(|v| v.to_string()).unwrap_or_else(|| "NULL".to_string())
+                        }
+                        AggregateFunc::Max(_) => {
+                            let mut max_val: Option<Value> = None;
+                            for record in &records {
+                                let val = &record.fields[field_idx];
+                                if matches!(val, Value::Null) {
+                                    continue;
+                                }
+                                match &max_val {
+                                    None => max_val = Some(val.clone()),
+                                    Some(current_max) => {
+                                        if Self::compare_values_for_sort(val, current_max)
+                                            == std::cmp::Ordering::Greater
+                                        {
+                                            max_val = Some(val.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            max_val.map(|v| v.to_string()).unwrap_or_else(|| "NULL".to_string())
+                        }
+                        AggregateFunc::Median(_) => {
+                            let mut numeric_values: Vec<f64> = Vec::new();
+                            for record in &records {
+                                match &record.fields[field_idx] {
+                                    Value::Int(i) => numeric_values.push(*i as f64),
+                                    Value::Float(f) => numeric_values.push(*f),
+                                    Value::Null => {}
+                                    _ => {
+                                        return Err(ArcaneError::Other(format!(
+                                            "Cannot compute median on non-numeric field '{}'",
+                                            field_name
+                                        )))
+                                    }
+                                }
+                            }
+                            if numeric_values.is_empty() {
+                                "NULL".to_string()
+                            } else {
+                                numeric_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                                let len = numeric_values.len();
+                                let median = if len % 2 == 0 {
+                                    (numeric_values[len / 2 - 1] + numeric_values[len / 2]) / 2.0
+                                } else {
+                                    numeric_values[len / 2]
+                                };
+                                format!("{:.2}", median)
+                            }
+                        }
+                    };
+
+                    values.push(result);
+                }
+
+                return Ok(QueryResult::Rows {
+                    schema: col_names,
+                    rows: vec![values],
+                });
+            }
             Projection::Fields(ref field_names) => {
                 let mut field_indices = Vec::new();
                 for field_name in field_names {

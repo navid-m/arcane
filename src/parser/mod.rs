@@ -69,6 +69,16 @@ pub enum Projection {
     Head(usize),
     Tail(usize),
     Fields(Vec<String>),
+    Aggregates(Vec<AggregateFunc>),
+}
+
+#[derive(Debug, Clone)]
+pub enum AggregateFunc {
+    Avg(String),
+    Sum(String),
+    Min(String),
+    Max(String),
+    Median(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -572,10 +582,36 @@ impl Parser {
                 Projection::Tail(n)
             }
             Token::Ident(_) => {
+                let mut aggregates = Vec::new();
                 let mut fields = Vec::new();
+                let mut is_aggregate = false;
+
                 loop {
-                    let field = self.expect_ident()?;
-                    fields.push(field);
+                    let name = self.expect_ident()?;
+
+                    if self.peek() == &Token::LParen {
+                        is_aggregate = true;
+                        self.advance();
+                        let field = self.expect_ident()?;
+                        self.expect_token(&Token::RParen)?;
+
+                        let agg = match name.to_lowercase().as_str() {
+                            "avg" => AggregateFunc::Avg(field),
+                            "sum" => AggregateFunc::Sum(field),
+                            "min" => AggregateFunc::Min(field),
+                            "max" => AggregateFunc::Max(field),
+                            "median" => AggregateFunc::Median(field),
+                            _ => {
+                                return Err(ArcaneError::ParseError {
+                                    pos: self.pos,
+                                    msg: format!("Unknown aggregate function: '{}'", name),
+                                })
+                            }
+                        };
+                        aggregates.push(agg);
+                    } else {
+                        fields.push(name);
+                    }
 
                     if self.peek() == &Token::Comma {
                         self.advance();
@@ -583,7 +619,18 @@ impl Parser {
                         break;
                     }
                 }
-                Projection::Fields(fields)
+
+                if is_aggregate {
+                    if !fields.is_empty() {
+                        return Err(ArcaneError::ParseError {
+                            pos: self.pos,
+                            msg: "Cannot mix aggregate functions with regular fields".into(),
+                        });
+                    }
+                    Projection::Aggregates(aggregates)
+                } else {
+                    Projection::Fields(fields)
+                }
             }
             other => {
                 return Err(ArcaneError::ParseError {
