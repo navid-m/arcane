@@ -1469,4 +1469,88 @@ mod tests {
             _ => panic!("Expected Get"),
         }
     }
+
+    #[test]
+    fn test_parse_like_operator() {
+        let stmt = parse_statement("get * from Products where name like \"D%\"").unwrap();
+        match stmt {
+            Statement::Get { filter, .. } => {
+                assert!(filter.is_some());
+                match filter.unwrap() {
+                    Filter::Simple { field, op, value } => {
+                        assert_eq!(field, "name");
+                        assert_eq!(op, CompareOp::Like);
+                        assert_eq!(value, Value::String("D%".to_string()));
+                    }
+                    _ => panic!("Expected Simple filter"),
+                }
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_like_with_complex_filter() {
+        let stmt = parse_statement(
+            "get name from Products where name like \"D%\" and price > 4 and in_stock = true",
+        )
+        .unwrap();
+        match stmt {
+            Statement::Get { filter, .. } => {
+                assert!(filter.is_some());
+                // Should be And(And(Like, Gt), Eq)
+                match filter.unwrap() {
+                    Filter::And(left, right) => {
+                        match *left {
+                            Filter::And(inner_left, inner_right) => {
+                                match *inner_left {
+                                    Filter::Simple { op, .. } => {
+                                        assert_eq!(op, CompareOp::Like);
+                                    }
+                                    _ => panic!("Expected Like filter"),
+                                }
+                                match *inner_right {
+                                    Filter::Simple { op, .. } => {
+                                        assert_eq!(op, CompareOp::Gt);
+                                    }
+                                    _ => panic!("Expected Gt filter"),
+                                }
+                            }
+                            _ => panic!("Expected And filter on left"),
+                        }
+                        match *right {
+                            Filter::Simple { op, .. } => {
+                                assert_eq!(op, CompareOp::Eq);
+                            }
+                            _ => panic!("Expected Eq filter on right"),
+                        }
+                    }
+                    _ => panic!("Expected And filter"),
+                }
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_describe() {
+        let stmt = parse_statement("describe Products").unwrap();
+        match stmt {
+            Statement::Describe { bucket } => {
+                assert_eq!(bucket, "Products");
+            }
+            _ => panic!("Expected Describe"),
+        }
+    }
+
+    #[test]
+    fn test_parse_describe_with_semicolon() {
+        let stmt = parse_statement("describe Users;").unwrap();
+        match stmt {
+            Statement::Describe { bucket } => {
+                assert_eq!(bucket, "Users");
+            }
+            _ => panic!("Expected Describe"),
+        }
+    }
 }

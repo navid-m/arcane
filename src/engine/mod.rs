@@ -1619,4 +1619,232 @@ mod tests {
             _ => panic!("Expected Rows"),
         }
     }
+
+    #[test]
+    fn test_like_pattern_prefix() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 9.99)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 19.99)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 4.99)")
+            .unwrap();
+
+        let result = db
+            .execute("get * from Products where name like \"D%\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert!(rows[0][1].contains("Doohickey"));
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_like_pattern_suffix() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string)").unwrap();
+        db.execute("insert into Products (name: \"Widget\")")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\")")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\")")
+            .unwrap();
+
+        let result = db
+            .execute("get * from Products where name like \"%et\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_like_pattern_contains() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string)").unwrap();
+        db.execute("insert into Products (name: \"Widget\")")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\")")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\")")
+            .unwrap();
+
+        let result = db
+            .execute("get * from Products where name like \"%dg%\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_like_pattern_underscore() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string)").unwrap();
+        db.execute("insert into Products (name: \"Cat\")").unwrap();
+        db.execute("insert into Products (name: \"Bat\")").unwrap();
+        db.execute("insert into Products (name: \"Hat\")").unwrap();
+        db.execute("insert into Products (name: \"Boat\")").unwrap();
+
+        let result = db
+            .execute("get * from Products where name like \"_at\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 3); // Cat, Bat, Hat (not Boat)
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_like_pattern_exact_match() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string)").unwrap();
+        db.execute("insert into Products (name: \"Widget\")")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\")")
+            .unwrap();
+
+        let result = db
+            .execute("get * from Products where name like \"Widget\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert!(rows[0][1].contains("Widget"));
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_like_with_complex_filter() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float, in_stock: bool)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 4.49, in_stock: true)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey2\", price: 4.49, in_stock: false)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 9.99, in_stock: true)")
+            .unwrap();
+
+        let result = db
+            .execute(
+                "get name from Products where name like \"D%\" and price > 4 and in_stock = true",
+            )
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "Doohickey");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_describe_bucket() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float, in_stock: bool)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 9.99, in_stock: true)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 19.99, in_stock: false)")
+            .unwrap();
+
+        let result = db.execute("describe Products").unwrap();
+
+        match result {
+            QueryResult::Described {
+                bucket,
+                fields,
+                row_count,
+            } => {
+                assert_eq!(bucket, "Products");
+                assert_eq!(fields.len(), 3);
+                assert_eq!(fields[0].0, "name");
+                assert_eq!(fields[0].1, "string");
+                assert_eq!(fields[1].0, "price");
+                assert_eq!(fields[1].1, "float");
+                assert_eq!(fields[2].0, "in_stock");
+                assert_eq!(fields[2].1, "bool");
+                assert_eq!(row_count, 2);
+            }
+            _ => panic!("Expected Described"),
+        }
+    }
+
+    #[test]
+    fn test_describe_empty_bucket() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+
+        let result = db.execute("describe Users").unwrap();
+
+        match result {
+            QueryResult::Described {
+                bucket,
+                fields,
+                row_count,
+            } => {
+                assert_eq!(bucket, "Users");
+                assert_eq!(fields.len(), 2);
+                assert_eq!(row_count, 0);
+            }
+            _ => panic!("Expected Described"),
+        }
+    }
+
+    #[test]
+    fn test_describe_bucket_not_found() {
+        let (db, _dir) = setup_db();
+        let result = db.execute("describe NonExistent");
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ArcaneError::BucketNotFound(_)
+        ));
+    }
+
+    #[test]
+    fn test_describe_after_truncate() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\", age: 30)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Bob\", age: 25)")
+            .unwrap();
+        db.execute("truncate Users").unwrap();
+
+        let result = db.execute("describe Users").unwrap();
+
+        match result {
+            QueryResult::Described { row_count, .. } => {
+                assert_eq!(row_count, 0);
+            }
+            _ => panic!("Expected Described"),
+        }
+    }
 }
