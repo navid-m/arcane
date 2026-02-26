@@ -797,6 +797,7 @@ impl Database {
                         AggregateFunc::Min(f) => (f, "min"),
                         AggregateFunc::Max(f) => (f, "max"),
                         AggregateFunc::Median(f) => (f, "median"),
+                        AggregateFunc::Stddev(f) => (f, "stddev"),
                     };
 
                     let field_idx = schema
@@ -822,7 +823,7 @@ impl Database {
                                     Value::Null => {}
                                     _ => {
                                         return Err(ArcaneError::Other(format!(
-                                            "Cannot compute avg/mean on non-numeric field '{}'",
+                                            "Cannot compute average on non-numeric field '{}'",
                                             field_name
                                         )))
                                     }
@@ -917,6 +918,31 @@ impl Database {
                                     numeric_values[len / 2]
                                 };
                                 format!("{:.2}", median)
+                            }
+                        }
+                        AggregateFunc::Stddev(_) => {
+                            let mut numeric_values: Vec<f64> = Vec::new();
+                            for record in &records {
+                                match &record.fields[field_idx] {
+                                    Value::Int(i) => numeric_values.push(*i as f64),
+                                    Value::Float(f) => numeric_values.push(*f),
+                                    Value::Null => {}
+                                    _ => {
+                                        return Err(ArcaneError::Other(format!(
+                                            "Cannot compute stddev on non-numeric field '{}'",
+                                            field_name
+                                        )))
+                                    }
+                                }
+                            }
+                            if numeric_values.is_empty() {
+                                "NULL".to_string()
+                            } else {
+                                let mean = numeric_values.iter().sum::<f64>() / numeric_values.len() as f64;
+                                let variance = numeric_values.iter()
+                                    .map(|v| (v - mean).powi(2))
+                                    .sum::<f64>() / numeric_values.len() as f64;
+                                format!("{:.2}", variance.sqrt())
                             }
                         }
                     };
@@ -1990,6 +2016,390 @@ mod tests {
                 assert_eq!(row_count, 0);
             }
             _ => panic!("Expected Described"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_avg() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 20.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 30.0)")
+            .unwrap();
+
+        let result = db.execute("get avg(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "avg(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "20.00");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_mean() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 20.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 30.0)")
+            .unwrap();
+
+        let result = db.execute("get avg(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "avg(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "20.00");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_sum() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 20.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 30.0)")
+            .unwrap();
+
+        let result = db.execute("get sum(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "sum(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "60.00");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_min() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 20.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 5.0)")
+            .unwrap();
+
+        let result = db.execute("get min(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "min(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "5");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_max() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 20.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 5.0)")
+            .unwrap();
+
+        let result = db.execute("get max(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "max(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "20");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_median_odd_count() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"A\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"B\", price: 20.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"C\", price: 30.0)")
+            .unwrap();
+
+        let result = db.execute("get median(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "median(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "20.00");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_median_even_count() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"A\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"B\", price: 20.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"C\", price: 30.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"D\", price: 40.0)")
+            .unwrap();
+
+        let result = db.execute("get median(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "median(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "25.00");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_stddev() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"A\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"B\", price: 20.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"C\", price: 30.0)")
+            .unwrap();
+
+        let result = db.execute("get stddev(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "stddev(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "8.16");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_multiple_functions() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 20.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 30.0)")
+            .unwrap();
+
+        let result = db
+            .execute("get avg(price), sum(price), min(price), max(price) from Products")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 4);
+                assert_eq!(schema[0], "avg(price)");
+                assert_eq!(schema[1], "sum(price)");
+                assert_eq!(schema[2], "min(price)");
+                assert_eq!(schema[3], "max(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "20.00");
+                assert_eq!(rows[0][1], "60.00");
+                assert_eq!(rows[0][2], "10");
+                assert_eq!(rows[0][3], "30");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_with_filter() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float, in_stock: bool)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0, in_stock: true)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 20.0, in_stock: false)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 30.0, in_stock: true)")
+            .unwrap();
+
+        let result = db
+            .execute("get avg(price), sum(price) from Products where in_stock = true")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 2);
+                assert_eq!(schema[0], "avg(price)");
+                assert_eq!(schema[1], "sum(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "20.00");
+                assert_eq!(rows[0][1], "40.00");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_with_int_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\", age: 25)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Bob\", age: 30)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Charlie\", age: 35)")
+            .unwrap();
+
+        let result = db.execute("get avg(age), sum(age) from Users").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 2);
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "30.00");
+                assert_eq!(rows[0][1], "90.00");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_empty_result() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+
+        let result = db.execute("get avg(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "NULL");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_with_null_values() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\")")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 30.0)")
+            .unwrap();
+
+        let result = db.execute("get avg(price), sum(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 2);
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "20.00");
+                assert_eq!(rows[0][1], "40.00");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_unknown_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+
+        let result = db.execute("get avg(nonexistent) from Products");
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ArcaneError::UnknownField(_)));
+    }
+
+    #[test]
+    fn test_aggregate_non_numeric_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+
+        let result = db.execute("get avg(name) from Products");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_aggregate_min_max_string() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Zebra\")")
+            .unwrap();
+        db.execute("insert into Products (name: \"Apple\")")
+            .unwrap();
+        db.execute("insert into Products (name: \"Mango\")")
+            .unwrap();
+
+        let result = db.execute("get min(name), max(name) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 2);
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "Apple");
+                assert_eq!(rows[0][1], "Zebra");
+            }
+            _ => panic!("Expected Rows"),
         }
     }
 }

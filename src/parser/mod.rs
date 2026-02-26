@@ -79,6 +79,7 @@ pub enum AggregateFunc {
     Min(String),
     Max(String),
     Median(String),
+    Stddev(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -601,6 +602,7 @@ impl Parser {
                             "min" => AggregateFunc::Min(field),
                             "max" => AggregateFunc::Max(field),
                             "median" => AggregateFunc::Median(field),
+                            "stddev" => AggregateFunc::Stddev(field),
                             _ => {
                                 return Err(ArcaneError::ParseError {
                                     pos: self.pos,
