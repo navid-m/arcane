@@ -80,6 +80,7 @@ pub enum AggregateFunc {
     Max(String),
     Median(String),
     Stddev(String),
+    Count(Option<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -593,16 +594,55 @@ impl Parser {
                     if self.peek() == &Token::LParen {
                         is_aggregate = true;
                         self.advance();
-                        let field = self.expect_ident()?;
+
+                        let field = if name.to_lowercase() == "count" && self.peek() == &Token::Star
+                        {
+                            self.advance();
+                            None
+                        } else {
+                            Some(self.expect_ident()?)
+                        };
+
                         self.expect_token(&Token::RParen)?;
 
                         let agg = match name.to_lowercase().as_str() {
-                            "avg" => AggregateFunc::Avg(field),
-                            "sum" => AggregateFunc::Sum(field),
-                            "min" => AggregateFunc::Min(field),
-                            "max" => AggregateFunc::Max(field),
-                            "median" => AggregateFunc::Median(field),
-                            "stddev" => AggregateFunc::Stddev(field),
+                            "avg" => AggregateFunc::Avg(field.ok_or_else(|| {
+                                ArcaneError::ParseError {
+                                    pos: self.pos,
+                                    msg: "avg() requires a field name".into(),
+                                }
+                            })?),
+                            "sum" => AggregateFunc::Sum(field.ok_or_else(|| {
+                                ArcaneError::ParseError {
+                                    pos: self.pos,
+                                    msg: "sum() requires a field name".into(),
+                                }
+                            })?),
+                            "min" => AggregateFunc::Min(field.ok_or_else(|| {
+                                ArcaneError::ParseError {
+                                    pos: self.pos,
+                                    msg: "min() requires a field name".into(),
+                                }
+                            })?),
+                            "max" => AggregateFunc::Max(field.ok_or_else(|| {
+                                ArcaneError::ParseError {
+                                    pos: self.pos,
+                                    msg: "max() requires a field name".into(),
+                                }
+                            })?),
+                            "median" => AggregateFunc::Median(field.ok_or_else(|| {
+                                ArcaneError::ParseError {
+                                    pos: self.pos,
+                                    msg: "median() requires a field name".into(),
+                                }
+                            })?),
+                            "stddev" => AggregateFunc::Stddev(field.ok_or_else(|| {
+                                ArcaneError::ParseError {
+                                    pos: self.pos,
+                                    msg: "stddev() requires a field name".into(),
+                                }
+                            })?),
+                            "count" => AggregateFunc::Count(field),
                             _ => {
                                 return Err(ArcaneError::ParseError {
                                     pos: self.pos,

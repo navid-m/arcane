@@ -786,11 +786,17 @@ impl Database {
             }
             Projection::Aggregates(ref agg_funcs) => {
                 use crate::parser::AggregateFunc;
-                
+
                 let mut col_names = Vec::new();
                 let mut values = Vec::new();
 
                 for agg in agg_funcs {
+                    if matches!(agg, AggregateFunc::Count(None)) {
+                        col_names.push("count(*)".to_string());
+                        values.push(records.len().to_string());
+                        continue;
+                    }
+
                     let (field_name, func_name) = match agg {
                         AggregateFunc::Avg(f) => (f, "avg"),
                         AggregateFunc::Sum(f) => (f, "sum"),
@@ -798,6 +804,8 @@ impl Database {
                         AggregateFunc::Max(f) => (f, "max"),
                         AggregateFunc::Median(f) => (f, "median"),
                         AggregateFunc::Stddev(f) => (f, "stddev"),
+                        AggregateFunc::Count(Some(f)) => (f, "count"),
+                        AggregateFunc::Count(None) => unreachable!(),
                     };
 
                     let field_idx = schema
@@ -870,7 +878,9 @@ impl Database {
                                     }
                                 }
                             }
-                            min_val.map(|v| v.to_string()).unwrap_or_else(|| "NULL".to_string())
+                            min_val
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "NULL".to_string())
                         }
                         AggregateFunc::Max(_) => {
                             let mut max_val: Option<Value> = None;
@@ -890,7 +900,9 @@ impl Database {
                                     }
                                 }
                             }
-                            max_val.map(|v| v.to_string()).unwrap_or_else(|| "NULL".to_string())
+                            max_val
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "NULL".to_string())
                         }
                         AggregateFunc::Median(_) => {
                             let mut numeric_values: Vec<f64> = Vec::new();
@@ -938,13 +950,26 @@ impl Database {
                             if numeric_values.is_empty() {
                                 "NULL".to_string()
                             } else {
-                                let mean = numeric_values.iter().sum::<f64>() / numeric_values.len() as f64;
-                                let variance = numeric_values.iter()
+                                let mean = numeric_values.iter().sum::<f64>()
+                                    / numeric_values.len() as f64;
+                                let variance = numeric_values
+                                    .iter()
                                     .map(|v| (v - mean).powi(2))
-                                    .sum::<f64>() / numeric_values.len() as f64;
+                                    .sum::<f64>()
+                                    / numeric_values.len() as f64;
                                 format!("{:.2}", variance.sqrt())
                             }
                         }
+                        AggregateFunc::Count(Some(_)) => {
+                            let mut count = 0;
+                            for record in &records {
+                                if !matches!(&record.fields[field_idx], Value::Null) {
+                                    count += 1;
+                                }
+                            }
+                            count.to_string()
+                        }
+                        AggregateFunc::Count(None) => unreachable!(),
                     };
 
                     values.push(result);
@@ -2045,7 +2070,7 @@ mod tests {
     }
 
     #[test]
-    fn test_aggregate_mean() {
+    fn test_aggregate_count_star() {
         let (db, _dir) = setup_db();
         db.execute("create bucket Products (name: string, price: float)")
             .unwrap();
@@ -2056,14 +2081,39 @@ mod tests {
         db.execute("insert into Products (name: \"Doohickey\", price: 30.0)")
             .unwrap();
 
-        let result = db.execute("get avg(price) from Products").unwrap();
+        let result = db.execute("get count(*) from Products").unwrap();
 
         match result {
             QueryResult::Rows { schema, rows } => {
                 assert_eq!(schema.len(), 1);
-                assert_eq!(schema[0], "avg(price)");
+                assert_eq!(schema[0], "count(*)");
                 assert_eq!(rows.len(), 1);
-                assert_eq!(rows[0][0], "20.00");
+                assert_eq!(rows[0][0], "3");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_count_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 10.0)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\")")
+            .unwrap();
+        db.execute("insert into Products (name: \"Doohickey\", price: 30.0)")
+            .unwrap();
+
+        let result = db.execute("get count(price) from Products").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "count(price)");
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "2");
             }
             _ => panic!("Expected Rows"),
         }
@@ -2338,7 +2388,9 @@ mod tests {
         db.execute("insert into Products (name: \"Doohickey\", price: 30.0)")
             .unwrap();
 
-        let result = db.execute("get avg(price), sum(price) from Products").unwrap();
+        let result = db
+            .execute("get avg(price), sum(price) from Products")
+            .unwrap();
 
         match result {
             QueryResult::Rows { schema, rows } => {
@@ -2381,8 +2433,7 @@ mod tests {
     #[test]
     fn test_aggregate_min_max_string() {
         let (db, _dir) = setup_db();
-        db.execute("create bucket Products (name: string)")
-            .unwrap();
+        db.execute("create bucket Products (name: string)").unwrap();
         db.execute("insert into Products (name: \"Zebra\")")
             .unwrap();
         db.execute("insert into Products (name: \"Apple\")")
@@ -2390,7 +2441,9 @@ mod tests {
         db.execute("insert into Products (name: \"Mango\")")
             .unwrap();
 
-        let result = db.execute("get min(name), max(name) from Products").unwrap();
+        let result = db
+            .execute("get min(name), max(name) from Products")
+            .unwrap();
 
         match result {
             QueryResult::Rows { schema, rows } => {
