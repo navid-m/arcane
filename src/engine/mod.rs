@@ -64,6 +64,11 @@ pub enum QueryResult {
     Truncated {
         bucket: String,
     },
+    Described {
+        bucket: String,
+        fields: Vec<(String, String)>,
+        row_count: u64,
+    },
     Rows {
         schema: Vec<String>,
         rows: Vec<Vec<String>>,
@@ -104,6 +109,44 @@ impl fmt::Display for QueryResult {
             }
             QueryResult::Truncated { bucket } => {
                 writeln!(f, "Truncated bucket '{}'.", bucket)
+            }
+            QueryResult::Described {
+                bucket,
+                fields,
+                row_count,
+            } => {
+                writeln!(f, "\nBucket: {}", bucket)?;
+                writeln!(f)?;
+
+                if fields.is_empty() {
+                    writeln!(f, "No fields defined.")?;
+                } else {
+                    let max_name_len = fields
+                        .iter()
+                        .map(|(name, _)| name.len())
+                        .max()
+                        .unwrap_or(4)
+                        .max(5);
+                    let max_type_len = fields
+                        .iter()
+                        .map(|(_, ty)| ty.len())
+                        .max()
+                        .unwrap_or(4)
+                        .max(4);
+                    for (name, ty) in fields {
+                        writeln!(
+                            f,
+                            "{:<width_name$} : {:<width_type$}",
+                            name,
+                            ty,
+                            width_name = max_name_len,
+                            width_type = max_type_len
+                        )?;
+                    }
+                }
+
+                writeln!(f)?;
+                writeln!(f, "Total rows: {}", row_count)
             }
             QueryResult::Committed => {
                 writeln!(f, "Committed.")
@@ -232,6 +275,7 @@ impl Database {
                 filter,
             } => self.set(bucket, values, filter),
             Statement::Truncate { bucket } => self.truncate(bucket),
+            Statement::Describe { bucket } => self.describe(bucket),
             Statement::Get {
                 bucket,
                 projection,
@@ -660,6 +704,29 @@ impl Database {
         store.truncate()?;
 
         Ok(QueryResult::Truncated { bucket })
+    }
+
+    fn describe(&self, bucket: String) -> Result<QueryResult> {
+        let handle = self
+            .buckets
+            .get(&bucket)
+            .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
+
+        let store = handle.read();
+        let schema = &store.schema;
+        let row_count = store.record_count();
+
+        let fields: Vec<(String, String)> = schema
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), f.ty.to_string()))
+            .collect();
+
+        Ok(QueryResult::Described {
+            bucket,
+            fields,
+            row_count,
+        })
     }
 
     fn get(

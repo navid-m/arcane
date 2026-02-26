@@ -43,3 +43,5 @@ get * from Products order by price asc;
 get * from Products order by price desc;
 get name, in_stock from Products where price > 3 and in_stock = true;
 get name from Products where name like "D%" and price > 4 and in_stock = true;
+
+describe Products;

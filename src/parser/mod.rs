@@ -56,6 +56,9 @@ pub enum Statement {
     Truncate {
         bucket: String,
     },
+    Describe {
+        bucket: String,
+    },
     Commit,
 }
 
@@ -862,6 +865,10 @@ impl Parser {
             "truncate" => {
                 let bucket = self.expect_ident()?;
                 Ok(Statement::Truncate { bucket })
+            }
+            "describe" => {
+                let bucket = self.expect_ident()?;
+                Ok(Statement::Describe { bucket })
             }
             "commit!" => Ok(Statement::Commit),
             other => Err(ArcaneError::ParseError {
