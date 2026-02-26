@@ -57,6 +57,10 @@ pub enum QueryResult {
         bucket: String,
         count: usize,
     },
+    Updated {
+        bucket: String,
+        count: usize,
+    },
     Truncated {
         bucket: String,
     },
@@ -94,6 +98,9 @@ impl fmt::Display for QueryResult {
             }
             QueryResult::Deleted { bucket, count } => {
                 writeln!(f, "Deleted {} rows from '{}'.", count, bucket)
+            }
+            QueryResult::Updated { bucket, count } => {
+                writeln!(f, "Updated {} rows in '{}'.", count, bucket)
             }
             QueryResult::Truncated { bucket } => {
                 writeln!(f, "Truncated bucket '{}'.", bucket)
@@ -219,6 +226,11 @@ impl Database {
             Statement::BatchInsert { bucket, rows } => self.batch_insert(bucket, rows),
             Statement::Bulk { statements } => self.bulk(statements),
             Statement::Delete { bucket, filter } => self.delete(bucket, filter),
+            Statement::Set {
+                bucket,
+                values,
+                filter,
+            } => self.set(bucket, values, filter),
             Statement::Truncate { bucket } => self.truncate(bucket),
             Statement::Get {
                 bucket,
@@ -436,6 +448,80 @@ impl Database {
         }
 
         Ok(QueryResult::Deleted { bucket, count })
+    }
+
+    fn set(
+        &self,
+        bucket: String,
+        values: Vec<(Option<String>, Value)>,
+        filter: Filter,
+    ) -> Result<QueryResult> {
+        let handle = self
+            .buckets
+            .get(&bucket)
+            .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
+        let mut store = handle.write();
+        let schema = store.schema.clone();
+        let filter_idx = schema
+            .field_index(&filter.field)
+            .ok_or_else(|| ArcaneError::UnknownField(filter.field.clone()))?;
+        let records: Vec<Record> = store.scan_all()?;
+        let mut count = 0;
+
+        for old_record in records {
+            if old_record.fields.get(filter_idx).map_or(false, |v| {
+                Self::compare_values(v, &filter.op, &filter.value)
+            }) {
+                store.delete(old_record.hash)?;
+
+                let mut new_fields = old_record.fields.clone();
+                
+                let all_named = values.iter().all(|(name, _)| name.is_some());
+                if all_named {
+                    for (name, val) in &values {
+                        let field_name = name.as_ref().unwrap();
+                        if let Some(idx) = schema.field_index(field_name) {
+                            new_fields[idx] = val.clone();
+                        }
+                    }
+                } else {
+                    if values.len() != schema.fields.len() {
+                        return Err(ArcaneError::SchemaMismatch {
+                            expected: schema.fields.len(),
+                            got: values.len(),
+                        });
+                    }
+                    new_fields = values.iter().map(|(_, v)| v.clone()).collect();
+                }
+
+                for (i, val) in new_fields.iter().enumerate() {
+                    let field = &schema.fields[i];
+                    if !val.matches_type(&field.ty) && !matches!(val, Value::Null) {
+                        return Err(ArcaneError::TypeError {
+                            field: field.name.clone(),
+                            expected: field.ty.to_string(),
+                            got: val.type_name().to_string(),
+                        });
+                    }
+                }
+
+                let new_record = Record::new(new_fields.clone());
+                
+                if !self.config.no_wal {
+                    let wal_entry = WalInsert {
+                        bucket: bucket.clone(),
+                        hash: new_record.hash,
+                        fields: new_fields,
+                    };
+                    self.wal.append_insert(&wal_entry)?;
+                }
+
+                store.insert(new_record)?;
+                count += 1;
+            }
+        }
+
+        Ok(QueryResult::Updated { bucket, count })
     }
 
     fn compare_values(left: &Value, op: &parser::CompareOp, right: &Value) -> bool {

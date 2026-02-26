@@ -47,6 +47,11 @@ pub enum Statement {
         bucket: String,
         filter: Filter,
     },
+    Set {
+        bucket: String,
+        values: Vec<(Option<String>, Value)>,
+        filter: Filter,
+    },
     Truncate {
         bucket: String,
     },
@@ -604,6 +609,66 @@ impl Parser {
         })
     }
 
+    fn parse_set(&mut self) -> Result<Statement> {
+        let bucket = if self.peek() == &Token::LParen {
+            return Err(ArcaneError::ParseError {
+                pos: self.pos,
+                msg: "set command requires bucket name: set <bucket> ( ... ) where ...".into(),
+            });
+        } else {
+            self.expect_ident()?
+        };
+        
+        self.expect_token(&Token::LParen)?;
+        
+        let mut values: Vec<(Option<String>, Value)> = Vec::new();
+        loop {
+            if self.peek() == &Token::RParen {
+                break;
+            }
+            
+            let named = matches!(
+                (self.tokens.get(self.pos), self.tokens.get(self.pos + 1)),
+                (Some(Token::Ident(_)), Some(Token::Colon))
+            );
+
+            if named {
+                let field_name = self.expect_ident()?;
+                self.expect_token(&Token::Colon)?;
+                let val = self.parse_literal()?;
+                values.push((Some(field_name), val));
+            } else {
+                let val = self.parse_literal()?;
+                values.push((None, val));
+            }
+
+            if self.peek() == &Token::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect_token(&Token::RParen)?;
+
+        let where_kw = self.expect_ident()?;
+        if where_kw.to_lowercase() != "where" {
+            return Err(ArcaneError::ParseError {
+                pos: self.pos,
+                msg: format!("Expected 'where', got '{}'", where_kw),
+            });
+        }
+
+        let field = self.expect_ident()?;
+        let op = self.parse_compare_op()?;
+        let value = self.parse_literal()?;
+
+        Ok(Statement::Set {
+            bucket,
+            values,
+            filter: Filter { field, op, value },
+        })
+    }
+
     fn parse_compare_op(&mut self) -> Result<CompareOp> {
         let tok = self.advance().clone();
         match tok {
@@ -667,6 +732,7 @@ impl Parser {
             "bulk" => self.parse_bulk(),
             "get" => self.parse_get(),
             "delete" => self.parse_delete(),
+            "set" => self.parse_set(),
             "truncate" => {
                 let bucket = self.expect_ident()?;
                 Ok(Statement::Truncate { bucket })

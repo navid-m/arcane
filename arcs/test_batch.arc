@@ -7,7 +7,10 @@ insert into TestBatch2 (
     [name: "Diana", age: 28, city: "Seattle"]
 );
 
-delete from TestBatch2 where age >= 30;
+delete from TestBatch2 where age >= 31;
+
+set TestBatch2 ( name: "Eve", age: 22, city: "Chicago" ) where name = "Alice";
+set TestBatch2 ( name: "Genevra" ) where name = "Eve";
 
 commit!;
 
