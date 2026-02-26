@@ -35,6 +35,7 @@ def benchmark_inserts(n, threads=1):
             t0 = time.perf_counter()
             send_command(f'insert into bench (id: {i}, data: "test_{i}")')
             times.append(time.perf_counter() - t0)
+        send_command('commit!')
         results.extend(times)
 
     results = []
