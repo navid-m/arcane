@@ -433,16 +433,11 @@ impl Database {
 
         let mut store = handle.write();
         let schema = store.schema.clone();
-        let idx = schema
-            .field_index(&filter.field)
-            .ok_or_else(|| ArcaneError::UnknownField(filter.field.clone()))?;
         let records: Vec<Record> = store.scan_all()?;
         let mut count = 0;
 
         for record in records {
-            if record.fields.get(idx).map_or(false, |v| {
-                Self::compare_values(v, &filter.op, &filter.value)
-            }) {
+            if Self::evaluate_filter(&filter, &record, &schema)? {
                 store.delete(record.hash)?;
                 count += 1;
             }
@@ -474,16 +469,11 @@ impl Database {
             }
         }
 
-        let filter_idx = schema
-            .field_index(&filter.field)
-            .ok_or_else(|| ArcaneError::UnknownField(filter.field.clone()))?;
         let records: Vec<Record> = store.scan_all()?;
         let mut count = 0;
 
         for old_record in records {
-            if old_record.fields.get(filter_idx).map_or(false, |v| {
-                Self::compare_values(v, &filter.op, &filter.value)
-            }) {
+            if Self::evaluate_filter(&filter, &old_record, &schema)? {
                 store.delete(old_record.hash)?;
 
                 let mut new_fields = old_record.fields.clone();
@@ -571,6 +561,30 @@ impl Database {
         }
     }
 
+    fn evaluate_filter(filter: &Filter, record: &Record, schema: &Schema) -> Result<bool> {
+        match filter {
+            Filter::Simple { field, op, value } => {
+                let idx = schema
+                    .field_index(field)
+                    .ok_or_else(|| ArcaneError::UnknownField(field.clone()))?;
+                Ok(record
+                    .fields
+                    .get(idx)
+                    .map_or(false, |v| Self::compare_values(v, op, value)))
+            }
+            Filter::And(left, right) => {
+                let left_result = Self::evaluate_filter(left, record, schema)?;
+                let right_result = Self::evaluate_filter(right, record, schema)?;
+                Ok(left_result && right_result)
+            }
+            Filter::Or(left, right) => {
+                let left_result = Self::evaluate_filter(left, record, schema)?;
+                let right_result = Self::evaluate_filter(right, record, schema)?;
+                Ok(left_result || right_result)
+            }
+        }
+    }
+
     fn compare_values_for_sort(left: &Value, right: &Value) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         match (left, right) {
@@ -620,14 +634,13 @@ impl Database {
         let mut records: Vec<Record> = store.scan_all()?;
 
         if let Some(f) = &filter {
-            let idx = schema
-                .field_index(&f.field)
-                .ok_or_else(|| ArcaneError::UnknownField(f.field.clone()))?;
-            records.retain(|r| {
-                r.fields
-                    .get(idx)
-                    .map_or(false, |v| Self::compare_values(v, &f.op, &f.value))
-            });
+            let mut filtered_records = Vec::new();
+            for record in records {
+                if Self::evaluate_filter(f, &record, &schema)? {
+                    filtered_records.push(record);
+                }
+            }
+            records = filtered_records;
         }
 
         if let Some(ref order) = order_by {

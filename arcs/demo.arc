@@ -38,8 +38,7 @@ delete from Products where name = "Doohickey";
 
 get * from Products;
 get * from Products where in_stock = true;
-
 get name, price from Products where in_stock = true order by price desc;
-
 get * from Products order by price asc;
 get * from Products order by price desc;
+get name, in_stock from Products where price > 3 and in_stock = true;

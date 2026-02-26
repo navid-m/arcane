@@ -91,10 +91,14 @@ pub enum CompareOp {
 }
 
 #[derive(Debug, Clone)]
-pub struct Filter {
-    pub field: String,
-    pub op: CompareOp,
-    pub value: Value,
+pub enum Filter {
+    Simple {
+        field: String,
+        op: CompareOp,
+        value: Value,
+    },
+    And(Box<Filter>, Box<Filter>),
+    Or(Box<Filter>, Box<Filter>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,6 +125,8 @@ pub enum Token {
     Le,
     Gt,
     Ge,
+    And,
+    Or,
     Eof,
 }
 
@@ -215,6 +221,8 @@ impl<'a> Lexer<'a> {
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
             "null" | "__null__" => Token::Null,
+            "and" => Token::And,
+            "or" => Token::Or,
             _ => Token::Ident(s),
         }
     }
@@ -595,10 +603,7 @@ impl Parser {
         if let Token::Ident(ref kw) = self.peek().clone() {
             if kw.to_lowercase() == "where" {
                 self.advance();
-                let field = self.expect_ident()?;
-                let op = self.parse_compare_op()?;
-                let value = self.parse_literal()?;
-                filter = Some(Filter { field, op, value });
+                filter = Some(self.parse_filter()?);
             }
         }
 
@@ -660,14 +665,9 @@ impl Parser {
             });
         }
 
-        let field = self.expect_ident()?;
-        let op = self.parse_compare_op()?;
-        let value = self.parse_literal()?;
+        let filter = self.parse_filter()?;
 
-        Ok(Statement::Delete {
-            bucket,
-            filter: Filter { field, op, value },
-        })
+        Ok(Statement::Delete { bucket, filter })
     }
 
     fn parse_set(&mut self) -> Result<Statement> {
@@ -719,14 +719,12 @@ impl Parser {
             });
         }
 
-        let field = self.expect_ident()?;
-        let op = self.parse_compare_op()?;
-        let value = self.parse_literal()?;
+        let filter = self.parse_filter()?;
 
         Ok(Statement::Set {
             bucket,
             values,
-            filter: Filter { field, op, value },
+            filter,
         })
     }
 
@@ -743,6 +741,48 @@ impl Parser {
                 pos: self.pos,
                 msg: format!("Expected comparison operator, got {:?}", other),
             }),
+        }
+    }
+
+    fn parse_filter(&mut self) -> Result<Filter> {
+        self.parse_or_filter()
+    }
+
+    fn parse_or_filter(&mut self) -> Result<Filter> {
+        let mut left = self.parse_and_filter()?;
+
+        while self.peek() == &Token::Or {
+            self.advance();
+            let right = self.parse_and_filter()?;
+            left = Filter::Or(Box::new(left), Box::new(right));
+        }
+
+        Ok(left)
+    }
+
+    fn parse_and_filter(&mut self) -> Result<Filter> {
+        let mut left = self.parse_primary_filter()?;
+
+        while self.peek() == &Token::And {
+            self.advance();
+            let right = self.parse_primary_filter()?;
+            left = Filter::And(Box::new(left), Box::new(right));
+        }
+
+        Ok(left)
+    }
+
+    fn parse_primary_filter(&mut self) -> Result<Filter> {
+        if self.peek() == &Token::LParen {
+            self.advance();
+            let filter = self.parse_filter()?;
+            self.expect_token(&Token::RParen)?;
+            Ok(filter)
+        } else {
+            let field = self.expect_ident()?;
+            let op = self.parse_compare_op()?;
+            let value = self.parse_literal()?;
+            Ok(Filter::Simple { field, op, value })
         }
     }
 
@@ -995,7 +1035,14 @@ mod tests {
                 assert!(filter.is_some());
                 assert!(order_by.is_none());
                 let f = filter.unwrap();
-                assert_eq!(f.field, "name");
+                match f {
+                    Filter::Simple { field, op, value } => {
+                        assert_eq!(field, "name");
+                        assert_eq!(op, CompareOp::Eq);
+                        assert_eq!(value, Value::String("Alice".to_string()));
+                    }
+                    _ => panic!("Expected Simple filter"),
+                }
             }
             _ => panic!("Expected Get"),
         }
@@ -1104,7 +1151,12 @@ mod tests {
                 assert_eq!(values.len(), 2);
                 assert_eq!(values[0].0.as_ref().unwrap(), "name");
                 assert_eq!(values[1].0.as_ref().unwrap(), "age");
-                assert_eq!(filter.field, "name");
+                match filter {
+                    Filter::Simple { field, .. } => {
+                        assert_eq!(field, "name");
+                    }
+                    _ => panic!("Expected Simple filter"),
+                }
             }
             _ => panic!("Expected Set"),
         }
@@ -1123,7 +1175,12 @@ mod tests {
                 assert_eq!(values.len(), 2);
                 assert!(values[0].0.is_none());
                 assert!(values[1].0.is_none());
-                assert_eq!(filter.field, "id");
+                match filter {
+                    Filter::Simple { field, .. } => {
+                        assert_eq!(field, "id");
+                    }
+                    _ => panic!("Expected Simple filter"),
+                }
             }
             _ => panic!("Expected Set"),
         }
@@ -1285,6 +1342,97 @@ mod tests {
                 assert!(order_by.is_some());
                 let order = order_by.unwrap();
                 assert_eq!(order.order, SortOrder::Asc);
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_filter_and() {
+        let stmt =
+            parse_statement("get * from Products where price > 3 and in_stock = true").unwrap();
+        match stmt {
+            Statement::Get { filter, .. } => {
+                assert!(filter.is_some());
+                match filter.unwrap() {
+                    Filter::And(left, right) => {
+                        match *left {
+                            Filter::Simple { field, op, .. } => {
+                                assert_eq!(field, "price");
+                                assert_eq!(op, CompareOp::Gt);
+                            }
+                            _ => panic!("Expected Simple filter on left"),
+                        }
+                        match *right {
+                            Filter::Simple { field, op, .. } => {
+                                assert_eq!(field, "in_stock");
+                                assert_eq!(op, CompareOp::Eq);
+                            }
+                            _ => panic!("Expected Simple filter on right"),
+                        }
+                    }
+                    _ => panic!("Expected And filter"),
+                }
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_filter_or() {
+        let stmt = parse_statement("get * from Products where price = 2.5 or price > 10").unwrap();
+        match stmt {
+            Statement::Get { filter, .. } => {
+                assert!(filter.is_some());
+                match filter.unwrap() {
+                    Filter::Or(left, right) => {
+                        match *left {
+                            Filter::Simple { field, op, .. } => {
+                                assert_eq!(field, "price");
+                                assert_eq!(op, CompareOp::Eq);
+                            }
+                            _ => panic!("Expected Simple filter on left"),
+                        }
+                        match *right {
+                            Filter::Simple { field, op, .. } => {
+                                assert_eq!(field, "price");
+                                assert_eq!(op, CompareOp::Gt);
+                            }
+                            _ => panic!("Expected Simple filter on right"),
+                        }
+                    }
+                    _ => panic!("Expected Or filter"),
+                }
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_filter_with_parens() {
+        let stmt = parse_statement(
+            "get * from Products where (price > 3 and in_stock = true) or price = 2.5",
+        )
+        .unwrap();
+        match stmt {
+            Statement::Get { filter, .. } => {
+                assert!(filter.is_some());
+                match filter.unwrap() {
+                    Filter::Or(left, right) => {
+                        match *left {
+                            Filter::And(_, _) => {}
+                            _ => panic!("Expected And filter on left"),
+                        }
+                        match *right {
+                            Filter::Simple { field, op, .. } => {
+                                assert_eq!(field, "price");
+                                assert_eq!(op, CompareOp::Eq);
+                            }
+                            _ => panic!("Expected Simple filter on right"),
+                        }
+                    }
+                    _ => panic!("Expected Or filter"),
+                }
             }
             _ => panic!("Expected Get"),
         }
