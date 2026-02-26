@@ -30,6 +30,8 @@ truncate Products;
 insert into Products (name: "Widget", price: 9.99, in_stock: true);
 insert into Products (name: "Gadget", price: 24.99, in_stock: false);
 insert into Products (name: "Doohickey", price: 4.49, in_stock: true);
+insert into Products (name: "Doohickey2", price: 4.49, in_stock: true);
+
 commit!;
 
 delete from Products where name = "Doohickey";
@@ -37,7 +39,7 @@ delete from Products where name = "Doohickey";
 get * from Products;
 get * from Products where in_stock = true;
 
-get name, price from Products where in_stock = true;
+get name, price from Products where in_stock = true order by price desc;
 
 get * from Products order by price asc;
 get * from Products order by price desc;
