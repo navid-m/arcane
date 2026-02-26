@@ -620,6 +620,30 @@ impl Database {
                 let skip = records.len().saturating_sub(n);
                 records = records.into_iter().skip(skip).collect();
             }
+            Projection::Fields(ref field_names) => {
+                let mut field_indices = Vec::new();
+                for field_name in field_names {
+                    let idx = schema
+                        .field_index(field_name)
+                        .ok_or_else(|| ArcaneError::UnknownField(field_name.clone()))?;
+                    field_indices.push(idx);
+                }
+                let col_names: Vec<String> = field_names.clone();
+                let rows: Vec<Vec<String>> = records
+                    .iter()
+                    .map(|r| {
+                        field_indices
+                            .iter()
+                            .map(|&idx| r.fields[idx].to_string())
+                            .collect()
+                    })
+                    .collect();
+
+                return Ok(QueryResult::Rows {
+                    schema: col_names,
+                    rows,
+                });
+            }
             Projection::Star => {}
         }
 
@@ -1205,5 +1229,90 @@ mod tests {
             ArcaneError::BucketNotFound(_)
         ));
     }
+
+    #[test]
+    fn test_get_single_field_projection() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int, city: string)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30, \"NYC\")").unwrap();
+        db.execute("insert into Users (\"Bob\", 25, \"LA\")").unwrap();
+
+        let result = db.execute("get name from Users").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "name");
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 1);
+                assert_eq!(rows[0][0], "Alice");
+                assert_eq!(rows[1][0], "Bob");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_multiple_field_projection() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int, city: string)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30, \"NYC\")").unwrap();
+        db.execute("insert into Users (\"Bob\", 25, \"LA\")").unwrap();
+
+        let result = db.execute("get name, city from Users").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 2);
+                assert_eq!(schema[0], "name");
+                assert_eq!(schema[1], "city");
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0][0], "Alice");
+                assert_eq!(rows[0][1], "NYC");
+                assert_eq!(rows[1][0], "Bob");
+                assert_eq!(rows[1][1], "LA");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_field_projection_with_filter() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+        db.execute("insert into Users (\"Bob\", 25)").unwrap();
+        db.execute("insert into Users (\"Charlie\", 35)").unwrap();
+
+        let result = db.execute("get name from Users where age > 26").unwrap();
+
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                assert_eq!(schema.len(), 1);
+                assert_eq!(schema[0], "name");
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0][0], "Alice");
+                assert_eq!(rows[1][0], "Charlie");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_get_field_projection_unknown_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30)").unwrap();
+
+        let result = db.execute("get name, nonexistent from Users");
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ArcaneError::UnknownField(_)));
+    }
 }
+
 

@@ -36,3 +36,5 @@ delete from Products where name = "Doohickey";
 
 get * from Products;
 get * from Products where in_stock = true;
+
+get name from Products where in_stock = true;

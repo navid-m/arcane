@@ -64,6 +64,7 @@ pub enum Projection {
     Hash,
     Head(usize),
     Tail(usize),
+    Fields(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -542,6 +543,20 @@ impl Parser {
                 };
                 self.expect_token(&Token::RParen)?;
                 Projection::Tail(n)
+            }
+            Token::Ident(_) => {
+                let mut fields = Vec::new();
+                loop {
+                    let field = self.expect_ident()?;
+                    fields.push(field);
+                    
+                    if self.peek() == &Token::Comma {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                Projection::Fields(fields)
             }
             other => {
                 return Err(ArcaneError::ParseError {
@@ -1067,6 +1082,53 @@ mod tests {
         match &tokens[0] {
             Token::Ident(s) => assert_eq!(s, "commit!"),
             _ => panic!("Expected identifier with !"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_single_field() {
+        let stmt = parse_statement("get name from Users").unwrap();
+        match stmt {
+            Statement::Get { bucket, projection, filter } => {
+                assert_eq!(bucket, "Users");
+                assert!(matches!(projection, Projection::Fields(ref fields) if fields.len() == 1 && fields[0] == "name"));
+                assert!(filter.is_none());
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_multiple_fields() {
+        let stmt = parse_statement("get name, age, city from Users").unwrap();
+        match stmt {
+            Statement::Get { bucket, projection, filter } => {
+                assert_eq!(bucket, "Users");
+                match projection {
+                    Projection::Fields(fields) => {
+                        assert_eq!(fields.len(), 3);
+                        assert_eq!(fields[0], "name");
+                        assert_eq!(fields[1], "age");
+                        assert_eq!(fields[2], "city");
+                    }
+                    _ => panic!("Expected Fields projection"),
+                }
+                assert!(filter.is_none());
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_field_with_filter() {
+        let stmt = parse_statement("get name from Users where age > 20").unwrap();
+        match stmt {
+            Statement::Get { bucket, projection, filter } => {
+                assert_eq!(bucket, "Users");
+                assert!(matches!(projection, Projection::Fields(ref fields) if fields.len() == 1));
+                assert!(filter.is_some());
+            }
+            _ => panic!("Expected Get"),
         }
     }
 }
