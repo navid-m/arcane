@@ -3,7 +3,7 @@
 //! License: GPL-3.0-only
 
 use arcane::engine::Database;
-use arcane::meta::show_version;
+use arcane::meta::{get_version, show_version};
 use clap::{Parser, Subcommand};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -77,7 +77,7 @@ fn main() {
 fn repl(db: Arc<Database>) {
     println!(
         "Arcane v{} — Type AQL statements, one per line. Ctrl-D to exit.",
-        option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown")
+        get_version()
     );
     println!("DDIR: Connected.\n");
 
