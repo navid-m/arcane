@@ -88,6 +88,7 @@ pub enum CompareOp {
     Le,
     Gt,
     Ge,
+    Like,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +128,7 @@ pub enum Token {
     Ge,
     And,
     Or,
+    Like,
     Eof,
 }
 
@@ -223,6 +225,7 @@ impl<'a> Lexer<'a> {
             "null" | "__null__" => Token::Null,
             "and" => Token::And,
             "or" => Token::Or,
+            "like" => Token::Like,
             _ => Token::Ident(s),
         }
     }
@@ -729,14 +732,36 @@ impl Parser {
     }
 
     fn parse_compare_op(&mut self) -> Result<CompareOp> {
-        let tok = self.advance().clone();
+        let tok = self.peek().clone();
         match tok {
-            Token::Eq => Ok(CompareOp::Eq),
-            Token::Ne => Ok(CompareOp::Ne),
-            Token::Lt => Ok(CompareOp::Lt),
-            Token::Le => Ok(CompareOp::Le),
-            Token::Gt => Ok(CompareOp::Gt),
-            Token::Ge => Ok(CompareOp::Ge),
+            Token::Eq => {
+                self.advance();
+                Ok(CompareOp::Eq)
+            }
+            Token::Ne => {
+                self.advance();
+                Ok(CompareOp::Ne)
+            }
+            Token::Lt => {
+                self.advance();
+                Ok(CompareOp::Lt)
+            }
+            Token::Le => {
+                self.advance();
+                Ok(CompareOp::Le)
+            }
+            Token::Gt => {
+                self.advance();
+                Ok(CompareOp::Gt)
+            }
+            Token::Ge => {
+                self.advance();
+                Ok(CompareOp::Ge)
+            }
+            Token::Like => {
+                self.advance();
+                Ok(CompareOp::Like)
+            }
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,
                 msg: format!("Expected comparison operator, got {:?}", other),

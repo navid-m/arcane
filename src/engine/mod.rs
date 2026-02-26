@@ -558,7 +558,52 @@ impl Database {
                 (Value::Float(a), Value::Int(b)) => *a >= (*b as f64),
                 _ => false,
             },
+            Like => match (left, right) {
+                (Value::String(text), Value::String(pattern)) => {
+                    Self::match_like_pattern(text, pattern)
+                }
+                _ => false,
+            },
         }
+    }
+
+    fn match_like_pattern(text: &str, pattern: &str) -> bool {
+        let text_chars: Vec<char> = text.chars().collect();
+        let pattern_chars: Vec<char> = pattern.chars().collect();
+        Self::match_like_recursive(&text_chars, &pattern_chars, 0, 0)
+    }
+
+    fn match_like_recursive(
+        text: &[char],
+        pattern: &[char],
+        text_idx: usize,
+        pattern_idx: usize,
+    ) -> bool {
+        if pattern_idx >= pattern.len() {
+            return text_idx >= text.len();
+        }
+
+        if pattern[pattern_idx] == '%' {
+            if Self::match_like_recursive(text, pattern, text_idx, pattern_idx + 1) {
+                return true;
+            }
+            if text_idx < text.len() {
+                return Self::match_like_recursive(text, pattern, text_idx + 1, pattern_idx);
+            }
+            return false;
+        }
+
+        if text_idx >= text.len() {
+            return false;
+        }
+        if pattern[pattern_idx] == '_' {
+            return Self::match_like_recursive(text, pattern, text_idx + 1, pattern_idx + 1);
+        }
+        if text[text_idx] == pattern[pattern_idx] {
+            return Self::match_like_recursive(text, pattern, text_idx + 1, pattern_idx + 1);
+        }
+
+        false
     }
 
     fn evaluate_filter(filter: &Filter, record: &Record, schema: &Schema) -> Result<bool> {
