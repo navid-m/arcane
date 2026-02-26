@@ -47,5 +47,5 @@ get name from Products where name like "D%" and price > 4 and in_stock = true;
 describe Products;
 describe Names;
 
-get avg(price), median(price), min(price), max(price) from Products where in_stock = true;
+get avg(price), median(price), min(price), max(price), stddev(price) from Products where in_stock = true;
 get sum(price) from Products;
