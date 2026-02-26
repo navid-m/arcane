@@ -870,8 +870,7 @@ mod tests {
 
     #[test]
     fn test_parse_get_head() {
-        let stmt = parse_statement("get head(10) from Users").unwrap();
-        match stmt {
+        match parse_statement("get head(10) from Users").unwrap() {
             Statement::Get { projection, .. } => {
                 assert!(matches!(projection, Projection::Head(10)));
             }
@@ -881,8 +880,7 @@ mod tests {
 
     #[test]
     fn test_parse_get_tail() {
-        let stmt = parse_statement("get tail(5) from Users").unwrap();
-        match stmt {
+        match parse_statement("get tail(5) from Users").unwrap() {
             Statement::Get { projection, .. } => {
                 assert!(matches!(projection, Projection::Tail(5)));
             }
@@ -892,8 +890,7 @@ mod tests {
 
     #[test]
     fn test_parse_get_hash() {
-        let stmt = parse_statement("get __hash__ from Users").unwrap();
-        match stmt {
+        match parse_statement("get __hash__ from Users").unwrap() {
             Statement::Get { projection, .. } => {
                 assert!(matches!(projection, Projection::Hash));
             }
@@ -903,8 +900,7 @@ mod tests {
 
     #[test]
     fn test_parse_with_semicolon() {
-        let stmt = parse_statement("create bucket Test (id: int);").unwrap();
-        match stmt {
+        match parse_statement("create bucket Test (id: int);").unwrap() {
             Statement::CreateBucket { name, .. } => {
                 assert_eq!(name, "Test");
             }
