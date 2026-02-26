@@ -562,7 +562,7 @@ impl Parser {
                 loop {
                     let field = self.expect_ident()?;
                     fields.push(field);
-                    
+
                     if self.peek() == &Token::Comma {
                         self.advance();
                     } else {
@@ -588,10 +588,10 @@ impl Parser {
         }
 
         let bucket = self.expect_ident()?;
-        
+
         let mut filter = None;
         let mut order_by = None;
-        
+
         if let Token::Ident(ref kw) = self.peek().clone() {
             if kw.to_lowercase() == "where" {
                 self.advance();
@@ -601,7 +601,7 @@ impl Parser {
                 filter = Some(Filter { field, op, value });
             }
         }
-        
+
         if let Token::Ident(ref kw) = self.peek().clone() {
             if kw.to_lowercase() == "order" {
                 self.advance();
@@ -613,7 +613,7 @@ impl Parser {
                     });
                 }
                 let field = self.expect_ident()?;
-                
+
                 let order = if let Token::Ident(ref ord) = self.peek().clone() {
                     match ord.to_lowercase().as_str() {
                         "asc" => {
@@ -624,12 +624,12 @@ impl Parser {
                             self.advance();
                             SortOrder::Desc
                         }
-                        _ => SortOrder::Asc, 
+                        _ => SortOrder::Asc,
                     }
                 } else {
-                    SortOrder::Asc 
+                    SortOrder::Asc
                 };
-                
+
                 order_by = Some(OrderBy { field, order });
             }
         }
@@ -679,15 +679,15 @@ impl Parser {
         } else {
             self.expect_ident()?
         };
-        
+
         self.expect_token(&Token::LParen)?;
-        
+
         let mut values: Vec<(Option<String>, Value)> = Vec::new();
         loop {
             if self.peek() == &Token::RParen {
                 break;
             }
-            
+
             let named = matches!(
                 (self.tokens.get(self.pos), self.tokens.get(self.pos + 1)),
                 (Some(Token::Ident(_)), Some(Token::Colon))
@@ -1092,9 +1092,14 @@ mod tests {
 
     #[test]
     fn test_parse_set_named() {
-        let stmt = parse_statement("set Users (name: \"Bob\", age: 35) where name = \"Alice\"").unwrap();
+        let stmt =
+            parse_statement("set Users (name: \"Bob\", age: 35) where name = \"Alice\"").unwrap();
         match stmt {
-            Statement::Set { bucket, values, filter } => {
+            Statement::Set {
+                bucket,
+                values,
+                filter,
+            } => {
                 assert_eq!(bucket, "Users");
                 assert_eq!(values.len(), 2);
                 assert_eq!(values[0].0.as_ref().unwrap(), "name");
@@ -1109,7 +1114,11 @@ mod tests {
     fn test_parse_set_positional() {
         let stmt = parse_statement("set Users (\"Bob\", 35) where id = 1").unwrap();
         match stmt {
-            Statement::Set { bucket, values, filter } => {
+            Statement::Set {
+                bucket,
+                values,
+                filter,
+            } => {
                 assert_eq!(bucket, "Users");
                 assert_eq!(values.len(), 2);
                 assert!(values[0].0.is_none());
@@ -1139,9 +1148,16 @@ mod tests {
     fn test_parse_get_single_field() {
         let stmt = parse_statement("get name from Users").unwrap();
         match stmt {
-            Statement::Get { bucket, projection, filter, order_by } => {
+            Statement::Get {
+                bucket,
+                projection,
+                filter,
+                order_by,
+            } => {
                 assert_eq!(bucket, "Users");
-                assert!(matches!(projection, Projection::Fields(ref fields) if fields.len() == 1 && fields[0] == "name"));
+                assert!(
+                    matches!(projection, Projection::Fields(ref fields) if fields.len() == 1 && fields[0] == "name")
+                );
                 assert!(filter.is_none());
                 assert!(order_by.is_none());
             }
@@ -1153,7 +1169,12 @@ mod tests {
     fn test_parse_get_multiple_fields() {
         let stmt = parse_statement("get name, age, city from Users").unwrap();
         match stmt {
-            Statement::Get { bucket, projection, filter, order_by } => {
+            Statement::Get {
+                bucket,
+                projection,
+                filter,
+                order_by,
+            } => {
                 assert_eq!(bucket, "Users");
                 match projection {
                     Projection::Fields(fields) => {
@@ -1175,7 +1196,12 @@ mod tests {
     fn test_parse_get_field_with_filter() {
         let stmt = parse_statement("get name from Users where age > 20").unwrap();
         match stmt {
-            Statement::Get { bucket, projection, filter, order_by } => {
+            Statement::Get {
+                bucket,
+                projection,
+                filter,
+                order_by,
+            } => {
                 assert_eq!(bucket, "Users");
                 assert!(matches!(projection, Projection::Fields(ref fields) if fields.len() == 1));
                 assert!(filter.is_some());
@@ -1189,7 +1215,12 @@ mod tests {
     fn test_parse_get_with_order_by_asc() {
         let stmt = parse_statement("get * from Users order by age asc").unwrap();
         match stmt {
-            Statement::Get { bucket, projection, filter, order_by } => {
+            Statement::Get {
+                bucket,
+                projection,
+                filter,
+                order_by,
+            } => {
                 assert_eq!(bucket, "Users");
                 assert!(matches!(projection, Projection::Star));
                 assert!(filter.is_none());
@@ -1206,7 +1237,12 @@ mod tests {
     fn test_parse_get_with_order_by_desc() {
         let stmt = parse_statement("get * from Users order by name desc").unwrap();
         match stmt {
-            Statement::Get { bucket, projection, filter, order_by } => {
+            Statement::Get {
+                bucket,
+                projection,
+                filter,
+                order_by,
+            } => {
                 assert_eq!(bucket, "Users");
                 assert!(matches!(projection, Projection::Star));
                 assert!(filter.is_none());
@@ -1223,7 +1259,12 @@ mod tests {
     fn test_parse_get_with_filter_and_order_by() {
         let stmt = parse_statement("get * from Users where age > 20 order by name asc").unwrap();
         match stmt {
-            Statement::Get { bucket, projection, filter, order_by } => {
+            Statement::Get {
+                bucket,
+                projection,
+                filter,
+                order_by,
+            } => {
                 assert_eq!(bucket, "Users");
                 assert!(matches!(projection, Projection::Star));
                 assert!(filter.is_some());
@@ -1249,4 +1290,3 @@ mod tests {
         }
     }
 }
-

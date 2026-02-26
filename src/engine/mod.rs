@@ -462,9 +462,9 @@ impl Database {
             .get(&bucket)
             .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
         let mut store = handle.write();
-        let schema = store.schema.clone();     
+        let schema = store.schema.clone();
         let all_named = values.iter().all(|(name, _)| name.is_some());
-        
+
         if all_named {
             for (name, _) in &values {
                 let field_name = name.as_ref().unwrap();
@@ -473,7 +473,7 @@ impl Database {
                 }
             }
         }
-        
+
         let filter_idx = schema
             .field_index(&filter.field)
             .ok_or_else(|| ArcaneError::UnknownField(filter.field.clone()))?;
@@ -487,7 +487,7 @@ impl Database {
                 store.delete(old_record.hash)?;
 
                 let mut new_fields = old_record.fields.clone();
-                
+
                 if all_named {
                     for (name, val) in &values {
                         let field_name = name.as_ref().unwrap();
@@ -517,7 +517,7 @@ impl Database {
                 }
 
                 let new_record = Record::new(new_fields.clone());
-                
+
                 if !self.config.no_wal {
                     let wal_entry = WalInsert {
                         bucket: bucket.clone(),
@@ -575,9 +575,7 @@ impl Database {
         use std::cmp::Ordering;
         match (left, right) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            (Value::Float(a), Value::Float(b)) => {
-                a.partial_cmp(b).unwrap_or(Ordering::Equal)
-            }
+            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
             (Value::Int(a), Value::Float(b)) => {
                 (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
             }
@@ -636,12 +634,12 @@ impl Database {
             let sort_idx = schema
                 .field_index(&order.field)
                 .ok_or_else(|| ArcaneError::UnknownField(order.field.clone()))?;
-            
+
             records.sort_by(|a, b| {
                 let val_a = &a.fields[sort_idx];
                 let val_b = &b.fields[sort_idx];
                 let cmp = Self::compare_values_for_sort(val_a, val_b);
-                
+
                 match order.order {
                     parser::SortOrder::Asc => cmp,
                     parser::SortOrder::Desc => cmp.reverse(),
@@ -1117,7 +1115,9 @@ mod tests {
             _ => panic!("Expected Updated"),
         }
 
-        let result = db.execute("get * from Users where name = \"Alice\"").unwrap();
+        let result = db
+            .execute("get * from Users where name = \"Alice\"")
+            .unwrap();
         match result {
             QueryResult::Rows { rows, .. } => {
                 assert_eq!(rows.len(), 1);
@@ -1132,7 +1132,8 @@ mod tests {
         let (db, _dir) = setup_db();
         db.execute("create bucket Users (name: string, age: int, city: string)")
             .unwrap();
-        db.execute("insert into Users (\"Alice\", 30, \"NYC\")").unwrap();
+        db.execute("insert into Users (\"Alice\", 30, \"NYC\")")
+            .unwrap();
 
         let result = db
             .execute("set Users (name: \"Alicia\", age: 31, city: \"LA\") where name = \"Alice\"")
@@ -1166,9 +1167,7 @@ mod tests {
         db.execute("insert into Users (\"Bob\", 30)").unwrap();
         db.execute("insert into Users (\"Charlie\", 25)").unwrap();
 
-        let result = db
-            .execute("set Users (age: 31) where age = 30")
-            .unwrap();
+        let result = db.execute("set Users (age: 31) where age = 30").unwrap();
 
         match result {
             QueryResult::Updated { count, .. } => {
@@ -1193,7 +1192,9 @@ mod tests {
             .unwrap();
         db.execute("insert into Users (\"Alice\", 30)").unwrap();
 
-        let result = db.execute("set Users (name: \"Bob\", random_bullshit_column: 12345) where name = \"Alice\"");
+        let result = db.execute(
+            "set Users (name: \"Bob\", random_bullshit_column: 12345) where name = \"Alice\"",
+        );
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ArcaneError::UnknownField(_)));
@@ -1276,8 +1277,10 @@ mod tests {
         let (db, _dir) = setup_db();
         db.execute("create bucket Users (name: string, age: int, city: string)")
             .unwrap();
-        db.execute("insert into Users (\"Alice\", 30, \"NYC\")").unwrap();
-        db.execute("insert into Users (\"Bob\", 25, \"LA\")").unwrap();
+        db.execute("insert into Users (\"Alice\", 30, \"NYC\")")
+            .unwrap();
+        db.execute("insert into Users (\"Bob\", 25, \"LA\")")
+            .unwrap();
 
         let result = db.execute("get name from Users").unwrap();
 
@@ -1299,8 +1302,10 @@ mod tests {
         let (db, _dir) = setup_db();
         db.execute("create bucket Users (name: string, age: int, city: string)")
             .unwrap();
-        db.execute("insert into Users (\"Alice\", 30, \"NYC\")").unwrap();
-        db.execute("insert into Users (\"Bob\", 25, \"LA\")").unwrap();
+        db.execute("insert into Users (\"Alice\", 30, \"NYC\")")
+            .unwrap();
+        db.execute("insert into Users (\"Bob\", 25, \"LA\")")
+            .unwrap();
 
         let result = db.execute("get name, city from Users").unwrap();
 
@@ -1464,11 +1469,16 @@ mod tests {
         let (db, _dir) = setup_db();
         db.execute("create bucket Users (name: string, age: int, city: string)")
             .unwrap();
-        db.execute("insert into Users (\"Charlie\", 35, \"NYC\")").unwrap();
-        db.execute("insert into Users (\"Alice\", 30, \"LA\")").unwrap();
-        db.execute("insert into Users (\"Bob\", 25, \"SF\")").unwrap();
+        db.execute("insert into Users (\"Charlie\", 35, \"NYC\")")
+            .unwrap();
+        db.execute("insert into Users (\"Alice\", 30, \"LA\")")
+            .unwrap();
+        db.execute("insert into Users (\"Bob\", 25, \"SF\")")
+            .unwrap();
 
-        let result = db.execute("get name, age from Users order by age desc").unwrap();
+        let result = db
+            .execute("get name, age from Users order by age desc")
+            .unwrap();
 
         match result {
             QueryResult::Rows { schema, rows } => {
@@ -1485,6 +1495,3 @@ mod tests {
         }
     }
 }
-
-
-
