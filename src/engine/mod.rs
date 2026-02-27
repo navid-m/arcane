@@ -78,6 +78,11 @@ pub enum QueryResult {
         rows: Vec<Vec<String>>,
     },
     Hashes(Vec<u64>),
+    Exported {
+        bucket: String,
+        path: String,
+        count: usize,
+    },
     Printed {
         message: String,
     },
@@ -157,6 +162,17 @@ impl fmt::Display for QueryResult {
             }
             QueryResult::Committed => {
                 writeln!(f, "Committed.")
+            }
+            QueryResult::Exported {
+                bucket,
+                path,
+                count,
+            } => {
+                writeln!(
+                    f,
+                    "Exported {} rows from '{}' to '{}'.",
+                    count, bucket, path
+                )
             }
             QueryResult::Printed { message } => {
                 writeln!(f, "{}", message)
@@ -275,6 +291,12 @@ impl Database {
                 unique,
                 forced,
             } => self.create_bucket(name, fields, unique, forced),
+            Statement::CreateBucketFromCsv {
+                name,
+                csv_path,
+                unique,
+                forced,
+            } => self.create_bucket_from_csv(name, csv_path, unique, forced),
             Statement::Insert { bucket, values } => self.insert(bucket, values),
             Statement::BatchInsert { bucket, rows } => self.batch_insert(bucket, rows),
             Statement::Bulk { statements } => self.bulk(statements),
@@ -292,6 +314,7 @@ impl Database {
                 filter,
                 order_by,
             } => self.get(bucket, projection, filter, order_by),
+            Statement::Export { bucket, csv_path } => self.export_csv(bucket, csv_path),
             Statement::Print { message } => Ok(QueryResult::Printed { message }),
             Statement::Commit => self.commit(),
         }
@@ -1052,6 +1075,210 @@ impl Database {
             self.wal.force_sync()?;
         }
         Ok(QueryResult::Committed)
+    }
+
+    fn export_csv(&self, bucket: String, csv_path: String) -> Result<QueryResult> {
+        let handle = self
+            .buckets
+            .get(&bucket)
+            .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
+
+        let mut store = handle.write();
+        let schema = store.schema.clone();
+        let records: Vec<Record> = store.scan_all()?;
+        let mut csv_content = String::new();
+        let header: Vec<String> = schema.fields.iter().map(|f| f.name.clone()).collect();
+
+        csv_content.push_str(&header.join(","));
+        csv_content.push('\n');
+
+        for record in &records {
+            let row: Vec<String> = record
+                .fields
+                .iter()
+                .map(|v| Self::value_to_csv_field(v))
+                .collect();
+            csv_content.push_str(&row.join(","));
+            csv_content.push('\n');
+        }
+
+        std::fs::write(&csv_path, csv_content)?;
+
+        Ok(QueryResult::Exported {
+            bucket,
+            path: csv_path,
+            count: records.len(),
+        })
+    }
+
+    fn value_to_csv_field(value: &Value) -> String {
+        match value {
+            Value::String(s) => {
+                if s.contains(',') || s.contains('"') || s.contains('\n') {
+                    format!("\"{}\"", s.replace('"', "\"\""))
+                } else {
+                    s.clone()
+                }
+            }
+            Value::Null => String::new(),
+            other => other.to_string(),
+        }
+    }
+
+    fn create_bucket_from_csv(
+        &self,
+        name: String,
+        csv_path: String,
+        unique: bool,
+        forced: bool,
+    ) -> Result<QueryResult> {
+        let csv_content = std::fs::read_to_string(&csv_path).map_err(|e| {
+            ArcaneError::Other(format!("Failed to read CSV file '{}': {}", csv_path, e))
+        })?;
+        let mut lines = csv_content.lines();
+        let header_line = lines
+            .next()
+            .ok_or_else(|| ArcaneError::Other(format!("CSV file '{}' is empty", csv_path)))?;
+        let field_names = Self::parse_csv_line(header_line);
+
+        if field_names.is_empty() {
+            return Err(ArcaneError::Other(format!(
+                "CSV file '{}' has no columns",
+                csv_path
+            )));
+        }
+
+        let first_data_line = lines.next().ok_or_else(|| {
+            ArcaneError::Other(format!("CSV file '{}' has no data rows", csv_path))
+        })?;
+        let first_row_values = Self::parse_csv_line(first_data_line);
+
+        if first_row_values.len() != field_names.len() {
+            return Err(ArcaneError::Other(format!(
+                "CSV file '{}' has mismatched column count",
+                csv_path
+            )));
+        }
+
+        let mut fields = Vec::new();
+
+        for (i, field_name) in field_names.iter().enumerate() {
+            let value_str = &first_row_values[i];
+            let field_type = Self::infer_type(value_str);
+            fields.push(FieldDef {
+                name: field_name.clone(),
+                ty: field_type,
+            });
+        }
+
+        self.create_bucket(name.clone(), fields.clone(), unique, forced)?;
+
+        let first_row_parsed: Vec<(Option<String>, Value)> = field_names
+            .iter()
+            .zip(first_row_values.iter())
+            .map(|(name, val_str)| {
+                let field_def = fields.iter().find(|f| &f.name == name).unwrap();
+                let value = Self::parse_value(val_str, &field_def.ty);
+                (Some(name.clone()), value)
+            })
+            .collect();
+
+        self.insert(name.clone(), first_row_parsed)?;
+
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let row_values = Self::parse_csv_line(line);
+
+            if row_values.len() != field_names.len() {
+                continue;
+            }
+
+            let row_parsed: Vec<(Option<String>, Value)> = field_names
+                .iter()
+                .zip(row_values.iter())
+                .map(|(name, val_str)| {
+                    let field_def = fields.iter().find(|f| &f.name == name).unwrap();
+                    let value = Self::parse_value(val_str, &field_def.ty);
+                    (Some(name.clone()), value)
+                })
+                .collect();
+
+            self.insert(name.clone(), row_parsed)?;
+        }
+
+        Ok(QueryResult::BucketCreated { name })
+    }
+
+    fn parse_csv_line(line: &str) -> Vec<String> {
+        let mut fields = Vec::new();
+        let mut current_field = String::new();
+        let mut in_quotes = false;
+        let mut chars = line.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            match c {
+                '"' => {
+                    if in_quotes {
+                        if chars.peek() == Some(&'"') {
+                            current_field.push('"');
+                            chars.next();
+                        } else {
+                            in_quotes = false;
+                        }
+                    } else {
+                        in_quotes = true;
+                    }
+                }
+                ',' if !in_quotes => {
+                    fields.push(current_field.trim().to_string());
+                    current_field.clear();
+                }
+                _ => {
+                    current_field.push(c);
+                }
+            }
+        }
+
+        fields.push(current_field.trim().to_string());
+        fields
+    }
+
+    fn infer_type(value_str: &str) -> crate::storage::FieldType {
+        if value_str.is_empty() {
+            return crate::storage::FieldType::String;
+        }
+
+        if value_str.parse::<i64>().is_ok() {
+            return crate::storage::FieldType::Int;
+        }
+
+        if value_str.parse::<f64>().is_ok() {
+            return crate::storage::FieldType::Float;
+        }
+
+        match value_str.to_lowercase().as_str() {
+            "true" | "false" => return crate::storage::FieldType::Bool,
+            _ => {}
+        }
+
+        crate::storage::FieldType::String
+    }
+
+    fn parse_value(value_str: &str, field_type: &crate::storage::FieldType) -> Value {
+        if value_str.is_empty() {
+            return Value::Null;
+        }
+
+        match field_type {
+            crate::storage::FieldType::String => Value::String(value_str.to_string()),
+            crate::storage::FieldType::Int => Value::Int(value_str.parse().unwrap_or(0)),
+            crate::storage::FieldType::Float => Value::Float(value_str.parse().unwrap_or(0.0)),
+            crate::storage::FieldType::Bool => Value::Bool(value_str.to_lowercase() == "true"),
+            crate::storage::FieldType::Bytes => Value::Bytes(value_str.as_bytes().to_vec()),
+        }
     }
 
     fn resolve_values(schema: &Schema, values: &[(Option<String>, Value)]) -> Result<Vec<Value>> {
@@ -2850,6 +3077,243 @@ mod tests {
                 assert_eq!(message, "");
             }
             _ => panic!("Expected Printed"),
+        }
+    }
+
+    #[test]
+    fn test_export_csv() {
+        let (db, dir) = setup_db();
+        db.execute("create bucket Products (name: string, price: float, in_stock: bool)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Widget\", price: 9.99, in_stock: true)")
+            .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", price: 19.99, in_stock: false)")
+            .unwrap();
+
+        let csv_path = dir.path().join("products.csv");
+        let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
+        let result = db
+            .execute(&format!("export Products to \"{}\"", csv_path_str))
+            .unwrap();
+
+        match result {
+            QueryResult::Exported {
+                bucket,
+                path,
+                count,
+            } => {
+                assert_eq!(bucket, "Products");
+                assert_eq!(count, 2);
+                assert!(std::path::Path::new(&path).exists());
+            }
+            _ => panic!("Expected Exported"),
+        }
+
+        let csv_content = std::fs::read_to_string(&csv_path).unwrap();
+        assert!(csv_content.contains("name,price,in_stock"));
+        assert!(csv_content.contains("Widget"));
+        assert!(csv_content.contains("Gadget"));
+    }
+
+    #[test]
+    fn test_export_csv_empty_bucket() {
+        let (db, dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+
+        let csv_path = dir.path().join("users.csv");
+        let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
+        let result = db
+            .execute(&format!("export Users to \"{}\"", csv_path_str))
+            .unwrap();
+
+        match result {
+            QueryResult::Exported { count, .. } => {
+                assert_eq!(count, 0);
+            }
+            _ => panic!("Expected Exported"),
+        }
+
+        let csv_content = std::fs::read_to_string(&csv_path).unwrap();
+        assert!(csv_content.contains("name,age"));
+    }
+
+    #[test]
+    fn test_export_csv_with_special_characters() {
+        let (db, dir) = setup_db();
+        db.execute("create bucket Products (name: string, description: string)")
+            .unwrap();
+        db.execute(
+            "insert into Products (name: \"Widget\", description: \"A great, useful item\")",
+        )
+        .unwrap();
+        db.execute("insert into Products (name: \"Gadget\", description: \"Has \\\"quotes\\\"\")")
+            .unwrap();
+
+        let csv_path = dir.path().join("products.csv");
+        let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
+        db.execute(&format!("export Products to \"{}\"", csv_path_str))
+            .unwrap();
+
+        let csv_content = std::fs::read_to_string(&csv_path).unwrap();
+        assert!(csv_content.contains("\"A great, useful item\""));
+    }
+
+    #[test]
+    fn test_export_csv_bucket_not_found() {
+        let (db, dir) = setup_db();
+        let csv_path = dir.path().join("nonexistent.csv");
+        let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
+        let result = db.execute(&format!("export NonExistent to \"{}\"", csv_path_str));
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ArcaneError::BucketNotFound(_)
+        ));
+    }
+
+    #[test]
+    fn test_create_bucket_from_csv() {
+        let (db, dir) = setup_db();
+        let csv_path = dir.path().join("test.csv");
+        let csv_content = "name,age,active\nAlice,30,true\nBob,25,false\nCharlie,35,true\n";
+
+        std::fs::write(&csv_path, csv_content).unwrap();
+
+        let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
+        let result = db
+            .execute(&format!(
+                "create bucket Users from csv(\"{}\")",
+                csv_path_str
+            ))
+            .unwrap();
+
+        match result {
+            QueryResult::BucketCreated { name } => {
+                assert_eq!(name, "Users");
+            }
+            _ => panic!("Expected BucketCreated"),
+        }
+
+        let result = db.execute("get * from Users").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 3);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_create_bucket_from_csv_with_types() {
+        let (db, dir) = setup_db();
+        let csv_path = dir.path().join("products.csv");
+        let csv_content = "name,price,quantity\nWidget,9.99,100\nGadget,19.99,50\n";
+
+        std::fs::write(&csv_path, csv_content).unwrap();
+
+        let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
+        db.execute(&format!(
+            "create bucket Products from csv(\"{}\")",
+            csv_path_str
+        ))
+        .unwrap();
+
+        let schema = db.schema("Products").unwrap();
+        assert_eq!(schema.fields.len(), 3);
+        assert_eq!(schema.fields[0].name, "name");
+        assert_eq!(schema.fields[1].name, "price");
+        assert_eq!(schema.fields[2].name, "quantity");
+    }
+
+    #[test]
+    fn test_create_bucket_from_csv_empty_file() {
+        let (db, dir) = setup_db();
+        let csv_path = dir.path().join("empty.csv");
+
+        std::fs::write(&csv_path, "").unwrap();
+
+        let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
+        let result = db.execute(&format!(
+            "create bucket Empty from csv(\"{}\")",
+            csv_path_str
+        ));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_bucket_from_csv_file_not_found() {
+        let (db, _dir) = setup_db();
+        let result = db.execute("create bucket Users from csv(\"nonexistent.csv\")");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_export_and_import_roundtrip() {
+        let (db, dir) = setup_db();
+
+        db.execute("create bucket Original (name: string, value: int, active: bool)")
+            .unwrap();
+        db.execute("insert into Original (name: \"Test1\", value: 100, active: true)")
+            .unwrap();
+        db.execute("insert into Original (name: \"Test2\", value: 200, active: false)")
+            .unwrap();
+
+        let csv_path = dir.path().join("export.csv");
+        let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
+
+        db.execute(&format!("export Original to \"{}\"", csv_path_str))
+            .unwrap();
+        db.execute(&format!(
+            "create bucket Imported from csv(\"{}\")",
+            csv_path_str
+        ))
+        .unwrap();
+
+        let original_result = db.execute("get * from Original").unwrap();
+        let imported_result = db.execute("get * from Imported").unwrap();
+
+        match (original_result, imported_result) {
+            (
+                QueryResult::Rows {
+                    rows: original_rows,
+                    ..
+                },
+                QueryResult::Rows {
+                    rows: imported_rows,
+                    ..
+                },
+            ) => {
+                assert_eq!(original_rows.len(), imported_rows.len());
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_csv_with_null_values() {
+        let (db, dir) = setup_db();
+        let csv_path = dir.path().join("nulls.csv");
+        let csv_content = "name,age,city\nAlice,30,NYC\nBob,,LA\nCharlie,35,\n";
+
+        std::fs::write(&csv_path, csv_content).unwrap();
+
+        let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
+        db.execute(&format!(
+            "create bucket Users from csv(\"{}\")",
+            csv_path_str
+        ))
+        .unwrap();
+
+        let result = db.execute("get * from Users where age is null").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "Bob");
+            }
+            _ => panic!("Expected Rows"),
         }
     }
 }

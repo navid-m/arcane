@@ -14,6 +14,12 @@ pub enum Statement {
         unique: bool,
         forced: bool,
     },
+    CreateBucketFromCsv {
+        name: String,
+        csv_path: String,
+        unique: bool,
+        forced: bool,
+    },
     Insert {
         bucket: String,
         values: Vec<(Option<String>, Value)>,
@@ -45,6 +51,10 @@ pub enum Statement {
     },
     Describe {
         bucket: String,
+    },
+    Export {
+        bucket: String,
+        csv_path: String,
     },
     Print {
         message: String,
@@ -1011,6 +1021,42 @@ impl Parser {
                         msg: format!("Expected 'bucket', got '{}'", next),
                     });
                 }
+
+                let bucket_name = self.expect_ident()?;
+                if let Token::Ident(ref kw) = self.peek().clone() {
+                    if kw.to_lowercase() == "from" {
+                        self.advance();
+                        let csv_func = self.expect_ident()?;
+                        if csv_func.to_lowercase() != "csv" {
+                            return Err(ArcaneError::ParseError {
+                                pos: self.pos,
+                                msg: format!("Expected 'csv', got '{}'", csv_func),
+                            });
+                        }
+                        self.expect_token(&Token::LParen)?;
+                        let csv_path = match self.advance().clone() {
+                            Token::StringLit(s) => s,
+                            other => {
+                                return Err(ArcaneError::ParseError {
+                                    pos: self.pos,
+                                    msg: format!(
+                                        "Expected string literal for CSV path, got {:?}",
+                                        other
+                                    ),
+                                })
+                            }
+                        };
+                        self.expect_token(&Token::RParen)?;
+                        return Ok(Statement::CreateBucketFromCsv {
+                            name: bucket_name,
+                            csv_path,
+                            unique,
+                            forced,
+                        });
+                    }
+                }
+
+                self.pos -= 1;
                 self.parse_create_bucket(unique, forced)
             }
             "insert" => self.parse_insert(),
@@ -1025,6 +1071,26 @@ impl Parser {
             "describe" => {
                 let bucket = self.expect_ident()?;
                 Ok(Statement::Describe { bucket })
+            }
+            "export" => {
+                let bucket = self.expect_ident()?;
+                let to_kw = self.expect_ident()?;
+                if to_kw.to_lowercase() != "to" {
+                    return Err(ArcaneError::ParseError {
+                        pos: self.pos,
+                        msg: format!("Expected 'to' after bucket name, got '{}'", to_kw),
+                    });
+                }
+                let csv_path = match self.advance().clone() {
+                    Token::StringLit(s) => s,
+                    other => {
+                        return Err(ArcaneError::ParseError {
+                            pos: self.pos,
+                            msg: format!("Expected string literal for CSV path, got {:?}", other),
+                        })
+                    }
+                };
+                Ok(Statement::Export { bucket, csv_path })
             }
             "print" => {
                 let message = match self.advance().clone() {
@@ -1805,6 +1871,81 @@ mod tests {
                 assert_eq!(message, "Test message");
             }
             _ => panic!("Expected Print"),
+        }
+    }
+
+    #[test]
+    fn test_parse_export() {
+        let stmt = parse_statement("export Products to \"products.csv\"").unwrap();
+        match stmt {
+            Statement::Export { bucket, csv_path } => {
+                assert_eq!(bucket, "Products");
+                assert_eq!(csv_path, "products.csv");
+            }
+            _ => panic!("Expected Export"),
+        }
+    }
+
+    #[test]
+    fn test_parse_export_with_semicolon() {
+        let stmt = parse_statement("export Users to \"users.csv\";").unwrap();
+        match stmt {
+            Statement::Export { bucket, csv_path } => {
+                assert_eq!(bucket, "Users");
+                assert_eq!(csv_path, "users.csv");
+            }
+            _ => panic!("Expected Export"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_bucket_from_csv() {
+        let stmt = parse_statement("create bucket Users from csv(\"users.csv\")").unwrap();
+        match stmt {
+            Statement::CreateBucketFromCsv {
+                name,
+                csv_path,
+                unique,
+                forced,
+            } => {
+                assert_eq!(name, "Users");
+                assert_eq!(csv_path, "users.csv");
+                assert!(!unique);
+                assert!(!forced);
+            }
+            _ => panic!("Expected CreateBucketFromCsv"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_forced_unique_bucket_from_csv() {
+        let stmt =
+            parse_statement("create forced unique bucket Products from csv(\"products.csv\")")
+                .unwrap();
+        match stmt {
+            Statement::CreateBucketFromCsv {
+                name,
+                csv_path,
+                unique,
+                forced,
+            } => {
+                assert_eq!(name, "Products");
+                assert_eq!(csv_path, "products.csv");
+                assert!(unique);
+                assert!(forced);
+            }
+            _ => panic!("Expected CreateBucketFromCsv"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_bucket_from_csv_with_path() {
+        let stmt = parse_statement("create bucket Data from csv(\"/path/to/data.csv\")").unwrap();
+        match stmt {
+            Statement::CreateBucketFromCsv { csv_path, .. } => {
+                assert_eq!(csv_path, "/path/to/data.csv");
+            }
+            _ => panic!("Expected CreateBucketFromCsv"),
         }
     }
 }
