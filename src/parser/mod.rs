@@ -352,6 +352,17 @@ impl Parser {
     }
 
     fn parse_literal(&mut self) -> Result<Value> {
+        if let Token::Ident(ref name) = self.peek().clone() {
+            let func_name = name.clone();
+            if self.tokens.get(self.pos + 1) == Some(&Token::LParen) {
+                self.advance();
+                self.advance();
+                let arg = self.parse_literal()?;
+                self.expect_token(&Token::RParen)?;
+                return self.evaluate_string_function(&func_name, arg);
+            }
+        }
+
         match self.advance().clone() {
             Token::StringLit(s) => Ok(Value::String(s)),
             Token::IntLit(i) => Ok(Value::Int(i)),
@@ -361,6 +372,39 @@ impl Parser {
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,
                 msg: format!("Expected literal value, got {:?}", other),
+            }),
+        }
+    }
+
+    fn evaluate_string_function(&self, func_name: &str, arg: Value) -> Result<Value> {
+        match arg {
+            Value::String(s) => match func_name.to_lowercase().as_str() {
+                "upper" => Ok(Value::String(s.to_uppercase())),
+                "lower" => Ok(Value::String(s.to_lowercase())),
+                "title" => {
+                    let mut result = String::new();
+                    let mut capitalize_next = true;
+                    for c in s.chars() {
+                        if c.is_whitespace() {
+                            result.push(c);
+                            capitalize_next = true;
+                        } else if capitalize_next {
+                            result.push_str(&c.to_uppercase().to_string());
+                            capitalize_next = false;
+                        } else {
+                            result.push_str(&c.to_lowercase().to_string());
+                        }
+                    }
+                    Ok(Value::String(result))
+                }
+                _ => Err(ArcaneError::ParseError {
+                    pos: self.pos,
+                    msg: format!("Unknown string function: '{}'", func_name),
+                }),
+            },
+            _ => Err(ArcaneError::ParseError {
+                pos: self.pos,
+                msg: format!("Function '{}' requires a string argument", func_name),
             }),
         }
     }

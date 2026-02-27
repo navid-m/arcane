@@ -2459,4 +2459,168 @@ mod tests {
             _ => panic!("Expected Rows"),
         }
     }
+
+    #[test]
+    fn test_string_function_upper() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (name: \"alice\")").unwrap();
+
+        let result = db
+            .execute("set Users (name: upper(\"billy\")) where name = \"alice\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Updated { count, .. } => {
+                assert_eq!(count, 1);
+            }
+            _ => panic!("Expected Updated"),
+        }
+
+        let result = db.execute("get * from Users").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "BILLY");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_string_function_lower() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (name: \"ALICE\")").unwrap();
+
+        let result = db
+            .execute("set Users (name: lower(\"BOBBY\")) where name = \"ALICE\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Updated { count, .. } => {
+                assert_eq!(count, 1);
+            }
+            _ => panic!("Expected Updated"),
+        }
+
+        let result = db.execute("get * from Users").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "bobby");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_string_function_title() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (name: \"alice smith\")")
+            .unwrap();
+
+        let result = db
+            .execute("set Users (name: title(\"john doe\")) where name = \"alice smith\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Updated { count, .. } => {
+                assert_eq!(count, 1);
+            }
+            _ => panic!("Expected Updated"),
+        }
+
+        let result = db.execute("get * from Users").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "John Doe");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_string_function_title_from_uppercase() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (name: \"ALICE\")").unwrap();
+
+        let result = db
+            .execute("set Users (name: title(\"JOHN DOE\")) where name = \"ALICE\"")
+            .unwrap();
+
+        match result {
+            QueryResult::Updated { count, .. } => {
+                assert_eq!(count, 1);
+            }
+            _ => panic!("Expected Updated"),
+        }
+
+        let result = db.execute("get * from Users").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "John Doe");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_string_function_in_where_clause() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (name: \"Alice\")").unwrap();
+        db.execute("insert into Users (name: \"Bob\")").unwrap();
+        db.execute("insert into Users (name: \"Eve\")").unwrap();
+
+        let result = db
+            .execute("get * from Users where name = title(\"eve\")")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "Eve");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_string_function_in_insert() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (name: upper(\"alice\"))")
+            .unwrap();
+
+        let result = db.execute("get * from Users").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "ALICE");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_string_function_nested() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string)").unwrap();
+        db.execute("insert into Users (name: upper(lower(\"ALICE\")))")
+            .unwrap();
+
+        let result = db.execute("get * from Users").unwrap();
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "ALICE");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
 }

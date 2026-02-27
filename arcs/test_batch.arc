@@ -15,3 +15,9 @@ set TestBatch2 ( name: "Genevra" ) where name = "Eve";
 commit!;
 
 get * from TestBatch2;
+
+get * from TestBatch2 where name = title("eve");
+
+set TestBatch2 ( name: upper("billy") ) where name = "Bob";
+
+get * from TestBatch2;
