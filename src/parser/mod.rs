@@ -1,20 +1,7 @@
 //! AQL — Arcane Query Language Parser.
 //!
-//! statement     ::= create_bucket | insert | batch_insert | bulk | get
-//! create_bucket ::= "create" "bucket" IDENT "(" field_def ("," field_def)* ")"
-//! field_def     ::= IDENT ":" type
-//! type          ::= "string" | "int" | "float" | "bool" | "bytes"
-//! insert        ::= "insert" "into" IDENT "(" value_list ")"
-//! batch_insert  ::= "insert" "into" IDENT "(" "[" value_list "]" ("," "[" value_list "]")* ")"
-//! bulk          ::= "bulk" "{" statement* "}"
-//! value_list    ::= named_value_list | positional_value_list
-//! named_value   ::= IDENT ":" literal
-//! positional    ::= literal
-//! get           ::= "get" projection "from" IDENT filter?
-//! projection    ::= "*" | "__hash__" | "head" "(" INT ")" | "tail" "(" INT ")"
-//! filter        ::= "where" IDENT "=" literal
-//! literal       ::= STRING | INT | FLOAT | "true" | "false" | "null"
-//! STRING        ::= '"' ... '"'
+//! This is a parser for the Arcane Query Language.
+//! It provides a way to parse and validate AQL statements.
 
 use crate::error::{ArcaneError, Result};
 use crate::storage::{FieldDef, FieldType, Value};
