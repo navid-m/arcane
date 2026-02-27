@@ -91,6 +91,8 @@ pub enum CompareOp {
     Gt,
     Ge,
     Like,
+    IsNull,
+    IsNotNull,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +133,8 @@ pub enum Token {
     And,
     Or,
     Like,
+    Is,
+    Not,
     Eof,
 }
 
@@ -228,6 +232,8 @@ impl<'a> Lexer<'a> {
             "and" => Token::And,
             "or" => Token::Or,
             "like" => Token::Like,
+            "is" => Token::Is,
+            "not" => Token::Not,
             _ => Token::Ident(s),
         }
     }
@@ -885,6 +891,29 @@ impl Parser {
                 self.advance();
                 Ok(CompareOp::Like)
             }
+            Token::Is => {
+                self.advance();
+                if self.peek() == &Token::Not {
+                    self.advance();
+                    if self.peek() == &Token::Null {
+                        self.advance();
+                        Ok(CompareOp::IsNotNull)
+                    } else {
+                        Err(ArcaneError::ParseError {
+                            pos: self.pos,
+                            msg: "Expected NULL after IS NOT".into(),
+                        })
+                    }
+                } else if self.peek() == &Token::Null {
+                    self.advance();
+                    Ok(CompareOp::IsNull)
+                } else {
+                    Err(ArcaneError::ParseError {
+                        pos: self.pos,
+                        msg: "Expected NULL or NOT NULL after IS".into(),
+                    })
+                }
+            }
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,
                 msg: format!("Expected comparison operator, got {:?}", other),
@@ -929,7 +958,11 @@ impl Parser {
         } else {
             let field = self.expect_ident()?;
             let op = self.parse_compare_op()?;
-            let value = self.parse_literal()?;
+            let value = if matches!(op, CompareOp::IsNull | CompareOp::IsNotNull) {
+                Value::Null
+            } else {
+                self.parse_literal()?
+            };
             Ok(Filter::Simple { field, op, value })
         }
     }

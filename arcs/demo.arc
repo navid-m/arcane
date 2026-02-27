@@ -1,13 +1,18 @@
 # Run with: arcc run examples/demo.arc
 
 create forced unique bucket Names (first_name: string, last_name: string);
+
 truncate Names;
 
 insert into Names (first_name: "Bob", last_name: "Marley", non_existent_field: "value", another_non_field: "yo");
 insert into Names (first_name: "Charlie", last_name: "Parker");
 insert into Names (first_name: "Charlie", last_name: "Brown");
 insert into Names (first_name: "Billy", last_name: "Bobby");
+
 commit!;
+
+get * from Names where non_existent_field is null;
+get * from Names where non_existent_field is not null;
 
 # Get all rows
 get * from Names;

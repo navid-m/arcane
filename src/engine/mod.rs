@@ -612,6 +612,8 @@ impl Database {
                 }
                 _ => false,
             },
+            IsNull => matches!(left, Value::Null),
+            IsNotNull => !matches!(left, Value::Null),
         }
     }
 
@@ -657,13 +659,21 @@ impl Database {
     fn evaluate_filter(filter: &Filter, record: &Record, schema: &Schema) -> Result<bool> {
         match filter {
             Filter::Simple { field, op, value } => {
-                let idx = schema
-                    .field_index(field)
-                    .ok_or_else(|| ArcaneError::UnknownField(field.clone()))?;
-                Ok(record
-                    .fields
-                    .get(idx)
-                    .map_or(false, |v| Self::compare_values(v, op, value)))
+                if matches!(op, parser::CompareOp::IsNull | parser::CompareOp::IsNotNull) {
+                    let field_value = match schema.field_index(field) {
+                        Some(idx) => record.fields.get(idx).unwrap_or(&Value::Null),
+                        None => &Value::Null,
+                    };
+                    Ok(Self::compare_values(field_value, op, value))
+                } else {
+                    let idx = schema
+                        .field_index(field)
+                        .ok_or_else(|| ArcaneError::UnknownField(field.clone()))?;
+                    Ok(record
+                        .fields
+                        .get(idx)
+                        .map_or(false, |v| Self::compare_values(v, op, value)))
+                }
             }
             Filter::And(left, right) => {
                 let left_result = Self::evaluate_filter(left, record, schema)?;
