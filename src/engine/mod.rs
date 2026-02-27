@@ -1,8 +1,6 @@
 //! The storage engine of ArcaneDB.
 //!
 //! This module provides the core functionality for managing and interacting with the storage engine.
-//!
-//! It includes features such as bucket creation, data insertion, deletion, and update operations.
 
 use crate::error::{ArcaneError, Result};
 use crate::parser::{self, Filter, Projection, Statement};
