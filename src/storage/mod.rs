@@ -386,6 +386,75 @@ impl BucketStore {
         Ok(record.hash)
     }
 
+    /// Bulk insert multiple records efficiently.
+    ///
+    /// Returns the number of records inserted.
+    ///
+    /// This method batches I/O operations for performance on large datasets.
+    pub fn bulk_insert(&mut self, records: Vec<Record>) -> Result<usize> {
+        if records.is_empty() {
+            return Ok(0);
+        }
+
+        for record in &records {
+            if self.index_contains(record.hash) {
+                return Err(ArcaneError::DuplicateRecord(
+                    record.hash,
+                    self.schema.bucket_name.clone(),
+                ));
+            }
+        }
+
+        let mut data_buffer = Vec::new();
+        let mut index_entries = Vec::with_capacity(records.len());
+        let mut offset = self.write_pos;
+
+        for record in &records {
+            let serialized: Vec<(usize, Value)> = record
+                .serialized_fields()
+                .into_iter()
+                .map(|(i, v)| (i, v.clone()))
+                .collect();
+            let field_bytes = bincode::serialize(&serialized)?;
+            let len = field_bytes.len() as u32;
+
+            data_buffer.extend_from_slice(&record.hash.to_le_bytes());
+            data_buffer.push(0x01);
+            data_buffer.extend_from_slice(&len.to_le_bytes());
+            data_buffer.extend_from_slice(&field_bytes);
+            index_entries.push((record.hash, offset));
+
+            offset += (13 + field_bytes.len()) as u64;
+        }
+
+        self.data_file.seek(SeekFrom::Start(self.write_pos))?;
+        self.data_file.write_all(&data_buffer)?;
+        self.write_pos = offset;
+        self.record_count += records.len() as u64;
+
+        for (hash, off) in &index_entries {
+            let pos = self.index.partition_point(|e| e.0 < *hash);
+            self.index.insert(pos, (*hash, *off));
+        }
+
+        let mut idx_file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(&self.idx_path)?;
+
+        for (hash, off) in &index_entries {
+            let mut entry = [0u8; INDEX_ENTRY_SIZE];
+            entry[0..8].copy_from_slice(&hash.to_le_bytes());
+            entry[8..16].copy_from_slice(&off.to_le_bytes());
+            idx_file.write_all(&entry)?;
+        }
+
+        self.data_file.seek(SeekFrom::Start(8))?;
+        self.data_file.write_all(&self.record_count.to_le_bytes())?;
+
+        Ok(records.len())
+    }
+
     /// Delete a record by hash (mark as deleted)
     pub fn delete(&mut self, hash: u64) -> Result<bool> {
         match self.index.binary_search_by_key(&hash, |e| e.0) {

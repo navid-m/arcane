@@ -1173,17 +1173,27 @@ impl Database {
 
         self.create_bucket(name.clone(), fields.clone(), unique, forced)?;
 
-        let first_row_parsed: Vec<(Option<String>, Value)> = field_names
+        let mut all_records = Vec::new();
+        let mut wal_entries = Vec::new();
+        let first_row_parsed: Vec<Value> = field_names
             .iter()
             .zip(first_row_values.iter())
             .map(|(name, val_str)| {
                 let field_def = fields.iter().find(|f| &f.name == name).unwrap();
-                let value = Self::parse_value(val_str, &field_def.ty);
-                (Some(name.clone()), value)
+                Self::parse_value(val_str, &field_def.ty)
             })
             .collect();
 
-        self.insert(name.clone(), first_row_parsed)?;
+        let first_record = Record::new(first_row_parsed);
+
+        if !self.config.no_wal {
+            wal_entries.push(WalInsert {
+                bucket: name.clone(),
+                hash: first_record.hash,
+                fields: first_record.fields.clone(),
+            });
+        }
+        all_records.push(first_record);
 
         for line in lines {
             if line.trim().is_empty() {
@@ -1196,18 +1206,40 @@ impl Database {
                 continue;
             }
 
-            let row_parsed: Vec<(Option<String>, Value)> = field_names
+            let row_parsed: Vec<Value> = field_names
                 .iter()
                 .zip(row_values.iter())
                 .map(|(name, val_str)| {
                     let field_def = fields.iter().find(|f| &f.name == name).unwrap();
-                    let value = Self::parse_value(val_str, &field_def.ty);
-                    (Some(name.clone()), value)
+                    Self::parse_value(val_str, &field_def.ty)
                 })
                 .collect();
 
-            self.insert(name.clone(), row_parsed)?;
+            let record = Record::new(row_parsed);
+
+            if !self.config.no_wal {
+                wal_entries.push(WalInsert {
+                    bucket: name.clone(),
+                    hash: record.hash,
+                    fields: record.fields.clone(),
+                });
+            }
+            all_records.push(record);
         }
+
+        if !self.config.no_wal {
+            for entry in wal_entries {
+                self.wal.append_insert(&entry)?;
+            }
+        }
+
+        let handle = self
+            .buckets
+            .get(&name)
+            .ok_or_else(|| ArcaneError::BucketNotFound(name.clone()))?;
+
+        let mut store = handle.write();
+        store.bulk_insert(all_records)?;
 
         Ok(QueryResult::BucketCreated { name })
     }
