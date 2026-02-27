@@ -46,6 +46,9 @@ pub enum Statement {
     Describe {
         bucket: String,
     },
+    Print {
+        message: String,
+    },
     Commit,
 }
 
@@ -1023,6 +1026,18 @@ impl Parser {
                 let bucket = self.expect_ident()?;
                 Ok(Statement::Describe { bucket })
             }
+            "print" => {
+                let message = match self.advance().clone() {
+                    Token::StringLit(s) => s,
+                    other => {
+                        return Err(ArcaneError::ParseError {
+                            pos: self.pos,
+                            msg: format!("Expected string literal after print, got {:?}", other),
+                        })
+                    }
+                };
+                Ok(Statement::Print { message })
+            }
             "commit!" => Ok(Statement::Commit),
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,
@@ -1704,6 +1719,92 @@ mod tests {
                 assert_eq!(bucket, "Users");
             }
             _ => panic!("Expected Describe"),
+        }
+    }
+
+    #[test]
+    fn test_parse_is_null() {
+        let stmt = parse_statement("get * from Users where name is null").unwrap();
+        match stmt {
+            Statement::Get { filter, .. } => {
+                assert!(filter.is_some());
+                match filter.unwrap() {
+                    Filter::Simple { field, op, .. } => {
+                        assert_eq!(field, "name");
+                        assert_eq!(op, CompareOp::IsNull);
+                    }
+                    _ => panic!("Expected Simple filter"),
+                }
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_is_not_null() {
+        let stmt = parse_statement("get * from Users where name is not null").unwrap();
+        match stmt {
+            Statement::Get { filter, .. } => {
+                assert!(filter.is_some());
+                match filter.unwrap() {
+                    Filter::Simple { field, op, .. } => {
+                        assert_eq!(field, "name");
+                        assert_eq!(op, CompareOp::IsNotNull);
+                    }
+                    _ => panic!("Expected Simple filter"),
+                }
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_is_null_with_and() {
+        let stmt = parse_statement("get * from Users where name is null and age > 20").unwrap();
+        match stmt {
+            Statement::Get { filter, .. } => {
+                assert!(filter.is_some());
+                match filter.unwrap() {
+                    Filter::And(left, right) => {
+                        match *left {
+                            Filter::Simple { op, .. } => {
+                                assert_eq!(op, CompareOp::IsNull);
+                            }
+                            _ => panic!("Expected IsNull filter on left"),
+                        }
+                        match *right {
+                            Filter::Simple { op, .. } => {
+                                assert_eq!(op, CompareOp::Gt);
+                            }
+                            _ => panic!("Expected Gt filter on right"),
+                        }
+                    }
+                    _ => panic!("Expected And filter"),
+                }
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn test_parse_print() {
+        let stmt = parse_statement("print \"Hello, World!\"").unwrap();
+        match stmt {
+            Statement::Print { message } => {
+                assert_eq!(message, "Hello, World!");
+            }
+            _ => panic!("Expected Print"),
+        }
+    }
+
+    #[test]
+    fn test_parse_print_with_semicolon() {
+        let stmt = parse_statement("print \"Test message\";").unwrap();
+        match stmt {
+            Statement::Print { message } => {
+                assert_eq!(message, "Test message");
+            }
+            _ => panic!("Expected Print"),
         }
     }
 }

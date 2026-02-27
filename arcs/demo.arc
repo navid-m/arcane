@@ -55,3 +55,5 @@ describe Names;
 get avg(price), median(price), min(price), max(price), stddev(price) from Products where in_stock = true;
 get sum(price) from Products;
 get count(*) from Products;
+
+print "Above is the product count.";

@@ -78,6 +78,9 @@ pub enum QueryResult {
         rows: Vec<Vec<String>>,
     },
     Hashes(Vec<u64>),
+    Printed {
+        message: String,
+    },
     Committed,
     Empty,
 }
@@ -154,6 +157,9 @@ impl fmt::Display for QueryResult {
             }
             QueryResult::Committed => {
                 writeln!(f, "Committed.")
+            }
+            QueryResult::Printed { message } => {
+                writeln!(f, "{}", message)
             }
             QueryResult::Rows { schema, rows } => {
                 if rows.is_empty() {
@@ -286,6 +292,7 @@ impl Database {
                 filter,
                 order_by,
             } => self.get(bucket, projection, filter, order_by),
+            Statement::Print { message } => Ok(QueryResult::Printed { message }),
             Statement::Commit => self.commit(),
         }
     }
@@ -2631,6 +2638,218 @@ mod tests {
                 assert_eq!(rows[0][1], "ALICE");
             }
             _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_is_null_non_existent_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\", age: 30)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Bob\", age: 25)")
+            .unwrap();
+
+        let result = db
+            .execute("get * from Users where non_existent_field is null")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_is_not_null_non_existent_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\", age: 30)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Bob\", age: 25)")
+            .unwrap();
+
+        let result = db
+            .execute("get * from Users where non_existent_field is not null")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 0);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_is_null_existing_field_with_null_values() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\", age: 30)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Bob\")").unwrap();
+
+        let result = db.execute("get * from Users where age is null").unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "Bob");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_is_not_null_existing_field() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\", age: 30)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Bob\")").unwrap();
+
+        let result = db
+            .execute("get * from Users where age is not null")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "Alice");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_is_null_with_and_filter() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int, city: string)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\", age: 30, city: \"NYC\")")
+            .unwrap();
+        db.execute("insert into Users (name: \"Bob\", age: 25)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Charlie\")").unwrap();
+
+        let result = db
+            .execute("get * from Users where city is null and age is not null")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][1], "Bob");
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_is_null_with_or_filter() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int, city: string)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\", age: 30, city: \"NYC\")")
+            .unwrap();
+        db.execute("insert into Users (name: \"Bob\", age: 25)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Charlie\")").unwrap();
+
+        let result = db
+            .execute("get * from Users where city is null or age is null")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_is_null_all_null_values() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\")").unwrap();
+        db.execute("insert into Users (name: \"Bob\")").unwrap();
+
+        let result = db.execute("get * from Users where age is null").unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_is_not_null_no_null_values() {
+        let (db, _dir) = setup_db();
+        db.execute("create bucket Users (name: string, age: int)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Alice\", age: 30)")
+            .unwrap();
+        db.execute("insert into Users (name: \"Bob\", age: 25)")
+            .unwrap();
+
+        let result = db
+            .execute("get * from Users where age is not null")
+            .unwrap();
+
+        match result {
+            QueryResult::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[test]
+    fn test_print_command() {
+        let (db, _dir) = setup_db();
+        let result = db.execute("print \"Hello, World!\"").unwrap();
+
+        match result {
+            QueryResult::Printed { message } => {
+                assert_eq!(message, "Hello, World!");
+            }
+            _ => panic!("Expected Printed"),
+        }
+    }
+
+    #[test]
+    fn test_print_with_special_characters() {
+        let (db, _dir) = setup_db();
+        let result = db.execute("print \"Line 1\\nLine 2\\tTabbed\"").unwrap();
+
+        match result {
+            QueryResult::Printed { message } => {
+                assert_eq!(message, "Line 1\nLine 2\tTabbed");
+            }
+            _ => panic!("Expected Printed"),
+        }
+    }
+
+    #[test]
+    fn test_print_empty_string() {
+        let (db, _dir) = setup_db();
+        let result = db.execute("print \"\"").unwrap();
+
+        match result {
+            QueryResult::Printed { message } => {
+                assert_eq!(message, "");
+            }
+            _ => panic!("Expected Printed"),
         }
     }
 }
