@@ -21,3 +21,5 @@ get * from TestBatch2 where name = title("eve");
 set TestBatch2 ( name: upper("billy") ) where name = "Bob";
 
 get * from TestBatch2;
+
+show buckets;
