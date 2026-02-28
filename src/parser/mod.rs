@@ -1082,6 +1082,16 @@ impl Parser {
                         msg: format!("Expected 'to' after bucket name, got '{}'", to_kw),
                     });
                 }
+
+                let csv_func = self.expect_ident()?;
+                if csv_func.to_lowercase() != "csv" {
+                    return Err(ArcaneError::ParseError {
+                        pos: self.pos,
+                        msg: format!("Expected 'csv', got '{}'", csv_func),
+                    });
+                }
+
+                self.expect_token(&Token::LParen)?;
                 let csv_path = match self.advance().clone() {
                     Token::StringLit(s) => s,
                     other => {
@@ -1091,6 +1101,8 @@ impl Parser {
                         })
                     }
                 };
+                self.expect_token(&Token::RParen)?;
+
                 Ok(Statement::Export { bucket, csv_path })
             }
             "print" => {
@@ -1878,7 +1890,7 @@ mod tests {
 
     #[test]
     fn test_parse_export() {
-        let stmt = parse_statement("export Products to \"products.csv\"").unwrap();
+        let stmt = parse_statement("export Products to csv(\"products.csv\")").unwrap();
         match stmt {
             Statement::Export { bucket, csv_path } => {
                 assert_eq!(bucket, "Products");
@@ -1890,7 +1902,7 @@ mod tests {
 
     #[test]
     fn test_parse_export_with_semicolon() {
-        let stmt = parse_statement("export Users to \"users.csv\";").unwrap();
+        let stmt = parse_statement("export Users to csv(\"users.csv\");").unwrap();
         match stmt {
             Statement::Export { bucket, csv_path } => {
                 assert_eq!(bucket, "Users");

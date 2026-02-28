@@ -3169,7 +3169,7 @@ mod tests {
         let csv_path = dir.path().join("products.csv");
         let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
         let result = db
-            .execute(&format!("export Products to \"{}\"", csv_path_str))
+            .execute(&format!("export Products to csv(\"{}\")", csv_path_str))
             .unwrap();
 
         match result {
@@ -3200,7 +3200,7 @@ mod tests {
         let csv_path = dir.path().join("users.csv");
         let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
         let result = db
-            .execute(&format!("export Users to \"{}\"", csv_path_str))
+            .execute(&format!("export Users to csv(\"{}\")", csv_path_str))
             .unwrap();
 
         match result {
@@ -3228,7 +3228,7 @@ mod tests {
 
         let csv_path = dir.path().join("products.csv");
         let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
-        db.execute(&format!("export Products to \"{}\"", csv_path_str))
+        db.execute(&format!("export Products to csv(\"{}\")", csv_path_str))
             .unwrap();
 
         let csv_content = std::fs::read_to_string(&csv_path).unwrap();
@@ -3240,7 +3240,7 @@ mod tests {
         let (db, dir) = setup_db();
         let csv_path = dir.path().join("nonexistent.csv");
         let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
-        let result = db.execute(&format!("export NonExistent to \"{}\"", csv_path_str));
+        let result = db.execute(&format!("export NonExistent to csv(\"{}\")", csv_path_str));
 
         assert!(result.is_err());
         assert!(matches!(
@@ -3340,7 +3340,7 @@ mod tests {
         let csv_path = dir.path().join("export.csv");
         let csv_path_str = csv_path.to_string_lossy().replace('\\', "/");
 
-        db.execute(&format!("export Original to \"{}\"", csv_path_str))
+        db.execute(&format!("export Original to csv(\"{}\")", csv_path_str))
             .unwrap();
         db.execute(&format!(
             "create bucket Imported from csv(\"{}\")",
