@@ -396,16 +396,24 @@ impl BucketStore {
             return Ok(0);
         }
 
-        for record in &records {
-            if self.index_contains(record.hash) {
+        let mut record_hashes: Vec<u64> = records.iter().map(|r| r.hash).collect();
+        record_hashes.sort_unstable();
+
+        let mut idx_pos = 0;
+        for &hash in &record_hashes {
+            while idx_pos < self.index.len() && self.index[idx_pos].0 < hash {
+                idx_pos += 1;
+            }
+            if idx_pos < self.index.len() && self.index[idx_pos].0 == hash {
                 return Err(ArcaneError::DuplicateRecord(
-                    record.hash,
+                    hash,
                     self.schema.bucket_name.clone(),
                 ));
             }
         }
 
-        let mut data_buffer = Vec::new();
+        let estimated_size = records.len() * 128;
+        let mut data_buffer = Vec::with_capacity(estimated_size);
         let mut index_entries = Vec::with_capacity(records.len());
         let mut offset = self.write_pos;
 
@@ -432,9 +440,30 @@ impl BucketStore {
         self.write_pos = offset;
         self.record_count += records.len() as u64;
 
+        index_entries.sort_unstable_by_key(|e| e.0);
+
+        let mut new_index = Vec::with_capacity(self.index.len() + index_entries.len());
+        let mut old_idx = 0;
+        let mut new_idx = 0;
+
+        while old_idx < self.index.len() && new_idx < index_entries.len() {
+            if self.index[old_idx].0 < index_entries[new_idx].0 {
+                new_index.push(self.index[old_idx]);
+                old_idx += 1;
+            } else {
+                new_index.push(index_entries[new_idx]);
+                new_idx += 1;
+            }
+        }
+
+        new_index.extend_from_slice(&self.index[old_idx..]);
+        new_index.extend_from_slice(&index_entries[new_idx..]);
+        self.index = new_index;
+
+        let mut idx_buffer = Vec::with_capacity(index_entries.len() * INDEX_ENTRY_SIZE);
         for (hash, off) in &index_entries {
-            let pos = self.index.partition_point(|e| e.0 < *hash);
-            self.index.insert(pos, (*hash, *off));
+            idx_buffer.extend_from_slice(&hash.to_le_bytes());
+            idx_buffer.extend_from_slice(&off.to_le_bytes());
         }
 
         let mut idx_file = OpenOptions::new()
@@ -442,13 +471,7 @@ impl BucketStore {
             .append(true)
             .open(&self.idx_path)?;
 
-        for (hash, off) in &index_entries {
-            let mut entry = [0u8; INDEX_ENTRY_SIZE];
-            entry[0..8].copy_from_slice(&hash.to_le_bytes());
-            entry[8..16].copy_from_slice(&off.to_le_bytes());
-            idx_file.write_all(&entry)?;
-        }
-
+        idx_file.write_all(&idx_buffer)?;
         self.data_file.seek(SeekFrom::Start(8))?;
         self.data_file.write_all(&self.record_count.to_le_bytes())?;
 
