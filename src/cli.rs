@@ -22,7 +22,7 @@ struct Args {
     command: Option<Cmd>,
 
     /// Show the version
-    #[arg(short, long)]
+    #[arg(short, long, alias = "about")]
     version: bool,
 }
 
