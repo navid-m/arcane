@@ -210,6 +210,23 @@ impl<'a> Lexer<'a> {
     fn read_number(&mut self, first: char) -> Token {
         let mut s = String::from(first);
         let mut is_float = false;
+
+        if first == '0' && self.peek_char() == Some('x') {
+            s.push('x');
+            self.advance();
+            while let Some(c) = self.peek_char() {
+                if c.is_ascii_hexdigit() || c == '_' {
+                    s.push(c);
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            let hex_str = s[2..].replace('_', "");
+            let value = u64::from_str_radix(&hex_str, 16).unwrap_or(0);
+            return Token::IntLit(value as i64);
+        }
+
         while let Some(c) = self.peek_char() {
             if c.is_ascii_digit() || c == '_' {
                 s.push(c);

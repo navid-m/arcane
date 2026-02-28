@@ -699,6 +699,11 @@ impl Database {
     fn evaluate_filter(filter: &Filter, record: &Record, schema: &Schema) -> Result<bool> {
         match filter {
             Filter::Simple { field, op, value } => {
+                if field == "__hash__" {
+                    let hash_value = Value::Int(record.hash as i64);
+                    return Ok(Self::compare_values(&hash_value, op, value));
+                }
+
                 if matches!(op, parser::CompareOp::IsNull | parser::CompareOp::IsNotNull) {
                     let field_value = match schema.field_index(field) {
                         Some(idx) => record.fields.get(idx).unwrap_or(&Value::Null),
@@ -810,20 +815,30 @@ impl Database {
         }
 
         if let Some(ref order) = order_by {
-            let sort_idx = schema
-                .field_index(&order.field)
-                .ok_or_else(|| ArcaneError::UnknownField(order.field.clone()))?;
+            if order.field == "__hash__" {
+                records.sort_by(|a, b| {
+                    let cmp = a.hash.cmp(&b.hash);
+                    match order.order {
+                        parser::SortOrder::Asc => cmp,
+                        parser::SortOrder::Desc => cmp.reverse(),
+                    }
+                });
+            } else {
+                let sort_idx = schema
+                    .field_index(&order.field)
+                    .ok_or_else(|| ArcaneError::UnknownField(order.field.clone()))?;
 
-            records.sort_by(|a, b| {
-                let val_a = &a.fields[sort_idx];
-                let val_b = &b.fields[sort_idx];
-                let cmp = Self::compare_values_for_sort(val_a, val_b);
+                records.sort_by(|a, b| {
+                    let val_a = &a.fields[sort_idx];
+                    let val_b = &b.fields[sort_idx];
+                    let cmp = Self::compare_values_for_sort(val_a, val_b);
 
-                match order.order {
-                    parser::SortOrder::Asc => cmp,
-                    parser::SortOrder::Desc => cmp.reverse(),
-                }
-            });
+                    match order.order {
+                        parser::SortOrder::Asc => cmp,
+                        parser::SortOrder::Desc => cmp.reverse(),
+                    }
+                });
+            }
         }
 
         match projection {
