@@ -29,8 +29,7 @@ async fn handle_connection(mut stream: TcpStream, db: Arc<Database>) -> std::io:
 
     loop {
         line.clear();
-        let n = reader.read_line(&mut line).await?;
-        if n == 0 {
+        if reader.read_line(&mut line).await? == 0 {
             break;
         }
         let trimmed = line.trim();
