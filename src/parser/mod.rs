@@ -61,6 +61,7 @@ pub enum Statement {
     },
     Commit,
     Checkpoint,
+    ShowBuckets,
 }
 
 #[derive(Debug, Clone)]
@@ -1136,6 +1137,17 @@ impl Parser {
             }
             "commit!" => Ok(Statement::Commit),
             "checkpoint!" => Ok(Statement::Checkpoint),
+            "show" => {
+                let next = self.expect_ident()?;
+                if next.to_lowercase() == "buckets" {
+                    Ok(Statement::ShowBuckets)
+                } else {
+                    Err(ArcaneError::ParseError {
+                        pos: self.pos,
+                        msg: format!("Expected 'buckets' after 'show', got '{}'", next),
+                    })
+                }
+            }
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,
                 msg: format!("Unknown statement keyword: '{}'", other),

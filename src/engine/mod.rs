@@ -88,6 +88,9 @@ pub enum QueryResult {
     },
     Committed,
     Empty,
+    BucketList {
+        buckets: Vec<String>,
+    },
 }
 
 impl fmt::Display for QueryResult {
@@ -218,6 +221,19 @@ impl fmt::Display for QueryResult {
                 Ok(())
             }
             QueryResult::Empty => Ok(()),
+            QueryResult::BucketList { buckets } => {
+                if buckets.is_empty() {
+                    writeln!(f, "No buckets found.")
+                } else {
+                    writeln!(f, "\nAvailable buckets:")?;
+                    writeln!(f)?;
+                    for bucket in buckets {
+                        writeln!(f, "  {}", bucket)?;
+                    }
+                    writeln!(f)?;
+                    writeln!(f, "({} buckets)", buckets.len())
+                }
+            }
         }
     }
 }
@@ -323,6 +339,7 @@ impl Database {
                     message: "Checkpoint completed.".to_string(),
                 })
             }
+            Statement::ShowBuckets => self.show_buckets(),
         }
     }
 
@@ -786,6 +803,18 @@ impl Database {
             fields,
             row_count,
         })
+    }
+
+    fn show_buckets(&self) -> Result<QueryResult> {
+        let mut buckets: Vec<String> = self
+            .buckets
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        buckets.sort();
+
+        Ok(QueryResult::BucketList { buckets })
     }
 
     fn get(
