@@ -60,6 +60,7 @@ pub enum Statement {
         message: String,
     },
     Commit,
+    Checkpoint,
 }
 
 #[derive(Debug, Clone)]
@@ -1105,6 +1106,7 @@ impl Parser {
                 Ok(Statement::Print { message })
             }
             "commit!" => Ok(Statement::Commit),
+            "checkpoint!" => Ok(Statement::Checkpoint),
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,
                 msg: format!("Unknown statement keyword: '{}'", other),

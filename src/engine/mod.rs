@@ -317,6 +317,12 @@ impl Database {
             Statement::Export { bucket, csv_path } => self.export_csv(bucket, csv_path),
             Statement::Print { message } => Ok(QueryResult::Printed { message }),
             Statement::Commit => self.commit(),
+            Statement::Checkpoint => {
+                self.checkpoint()?;
+                Ok(QueryResult::Printed {
+                    message: "Checkpoint completed.".to_string(),
+                })
+            }
         }
     }
 
@@ -485,6 +491,10 @@ impl Database {
             }
             rows.len()
         };
+
+        if count >= 1000 {
+            self.checkpoint()?;
+        }
 
         Ok(QueryResult::BatchInserted { bucket, count })
     }
@@ -1077,6 +1087,28 @@ impl Database {
         Ok(QueryResult::Committed)
     }
 
+    /// Checkpoint: Flush all bucket data to disk and truncate WAL.
+    ///
+    /// This should be called after large imports or periodically to prevent WAL
+    /// from growing too large.
+    pub fn checkpoint(&self) -> Result<()> {
+        if self.config.no_wal {
+            return Ok(());
+        }
+
+        for bucket_ref in self.buckets.iter() {
+            let handle = bucket_ref.value();
+            let mut store = handle.write();
+            store.flush()?;
+        }
+
+        self.wal.append_checkpoint()?;
+        self.wal.force_sync()?;
+        self.wal.truncate()?;
+
+        Ok(())
+    }
+
     fn export_csv(&self, bucket: String, csv_path: String) -> Result<QueryResult> {
         let handle = self
             .buckets
@@ -1176,7 +1208,7 @@ impl Database {
         let mut all_records = Vec::new();
         let mut wal_entries = Vec::new();
         let mut seen_hashes = std::collections::HashSet::new();
-        
+
         let first_row_parsed: Vec<Value> = field_names
             .iter()
             .zip(first_row_values.iter())
@@ -1244,8 +1276,14 @@ impl Database {
             .get(&name)
             .ok_or_else(|| ArcaneError::BucketNotFound(name.clone()))?;
 
+        let record_count = all_records.len();
         let mut store = handle.write();
         store.bulk_insert(all_records)?;
+        drop(store);
+
+        if record_count >= 1000 {
+            self.checkpoint()?;
+        }
 
         Ok(QueryResult::BucketCreated { name })
     }

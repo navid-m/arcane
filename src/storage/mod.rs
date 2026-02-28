@@ -603,6 +603,24 @@ impl BucketStore {
         self.data_file.flush()?;
         Ok(())
     }
+
+    /// Flush all in-memory data to disk.
+    ///
+    /// This includes the index and ensures the data file is synced.
+    pub fn flush(&mut self) -> Result<()> {
+        self.flush_index()?;
+        self.data_file.flush()?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe {
+                libc::fdatasync(self.data_file.as_raw_fd());
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
