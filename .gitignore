@@ -1,3 +1,4 @@
 target
 *.exe
 arcane_data
+*.csv

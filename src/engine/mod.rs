@@ -1175,6 +1175,8 @@ impl Database {
 
         let mut all_records = Vec::new();
         let mut wal_entries = Vec::new();
+        let mut seen_hashes = std::collections::HashSet::new();
+        
         let first_row_parsed: Vec<Value> = field_names
             .iter()
             .zip(first_row_values.iter())
@@ -1186,14 +1188,16 @@ impl Database {
 
         let first_record = Record::new(first_row_parsed);
 
-        if !self.config.no_wal {
-            wal_entries.push(WalInsert {
-                bucket: name.clone(),
-                hash: first_record.hash,
-                fields: first_record.fields.clone(),
-            });
+        if seen_hashes.insert(first_record.hash) {
+            if !self.config.no_wal {
+                wal_entries.push(WalInsert {
+                    bucket: name.clone(),
+                    hash: first_record.hash,
+                    fields: first_record.fields.clone(),
+                });
+            }
+            all_records.push(first_record);
         }
-        all_records.push(first_record);
 
         for line in lines {
             if line.trim().is_empty() {
@@ -1217,14 +1221,16 @@ impl Database {
 
             let record = Record::new(row_parsed);
 
-            if !self.config.no_wal {
-                wal_entries.push(WalInsert {
-                    bucket: name.clone(),
-                    hash: record.hash,
-                    fields: record.fields.clone(),
-                });
+            if seen_hashes.insert(record.hash) {
+                if !self.config.no_wal {
+                    wal_entries.push(WalInsert {
+                        bucket: name.clone(),
+                        hash: record.hash,
+                        fields: record.fields.clone(),
+                    });
+                }
+                all_records.push(record);
             }
-            all_records.push(record);
         }
 
         if !self.config.no_wal {
