@@ -2,3 +2,6 @@ target
 *.exe
 arcane_data
 *.csv
+AUDIT.md
+AUTHENTICATION.md
+hi.arc

@@ -5,6 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub const MAGIC: &[u8; 8] = b"ARCANE01";
+pub const MAGIC_ENCRYPTED: &[u8; 8] = b"ARCENC01";
 pub const HEADER_SIZE: u64 = 64;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
