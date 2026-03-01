@@ -352,6 +352,9 @@ impl Database {
             .collect()
     }
 
+    /// The checkpoint call on forced bucket creation ensures data integrity by flushing WAL.
+    ///
+    /// Do NOT remove this call.
     fn create_bucket(
         &self,
         name: String,
@@ -359,11 +362,14 @@ impl Database {
         unique: bool,
         forced: bool,
     ) -> Result<QueryResult> {
-        if self.buckets.contains_key(&name) {
+        let bucket_existed = self.buckets.contains_key(&name);
+
+        if bucket_existed {
             if unique && !forced {
                 return Err(ArcaneError::BucketExists(name));
             }
             if forced {
+                self.checkpoint()?;
                 self.buckets.remove(&name);
                 std::fs::remove_file(self.dir.join(format!("{}.arc", name)))?;
                 std::fs::remove_file(self.dir.join(format!("{}.arc.idx", name)))?;
