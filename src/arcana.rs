@@ -8,7 +8,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "arcane-user", about = "ArcaneDB User Management")]
+#[command(name = "arcana", about = "ArcaneDB User Management")]
 struct Args {
     /// Database directory
     #[arg(short, long, default_value = "./arcane_data")]

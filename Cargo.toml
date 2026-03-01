@@ -18,8 +18,8 @@ name = "arcc"
 path = "src/cli.rs"
 
 [[bin]]
-name = "arcane-user"
-path = "src/arcane_user.rs"
+name = "arcana"
+path = "src/arcana.rs"
 
 [dependencies]
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
