@@ -91,6 +91,10 @@ pub enum QueryResult {
     BucketList {
         buckets: Vec<String>,
     },
+    ColumnDropped {
+        bucket: String,
+        column: String,
+    },
 }
 
 impl fmt::Display for QueryResult {
@@ -234,6 +238,9 @@ impl fmt::Display for QueryResult {
                     writeln!(f, "({} buckets)", buckets.len())
                 }
             }
+            QueryResult::ColumnDropped { bucket, column } => {
+                writeln!(f, "Dropped column '{}' from bucket '{}'.", column, bucket)
+            }
         }
     }
 }
@@ -341,6 +348,7 @@ impl Database {
                 })
             }
             Statement::ShowBuckets => self.show_buckets(),
+            Statement::DropColumn { column, bucket } => self.drop_column(column, bucket),
         }
     }
 
@@ -832,6 +840,18 @@ impl Database {
         buckets.sort();
 
         Ok(QueryResult::BucketList { buckets })
+    }
+
+    fn drop_column(&self, column: String, bucket: String) -> Result<QueryResult> {
+        let handle = self
+            .buckets
+            .get(&bucket)
+            .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
+
+        let mut store = handle.write();
+        store.drop_column(&column)?;
+
+        Ok(QueryResult::ColumnDropped { bucket, column })
     }
 
     fn get(

@@ -63,6 +63,10 @@ pub enum Statement {
     Commit,
     Checkpoint,
     ShowBuckets,
+    DropColumn {
+        column: String,
+        bucket: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1205,6 +1209,18 @@ impl Parser {
                         msg: format!("Expected 'buckets' after 'show', got '{}'", next),
                     })
                 }
+            }
+            "drop" => {
+                let column = self.expect_ident()?;
+                let from_kw = self.expect_ident()?;
+                if from_kw.to_lowercase() != "from" {
+                    return Err(ArcaneError::ParseError {
+                        pos: self.pos,
+                        msg: format!("Expected 'from' after column name, got '{}'", from_kw),
+                    });
+                }
+                let bucket = self.expect_ident()?;
+                Ok(Statement::DropColumn { column, bucket })
             }
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,

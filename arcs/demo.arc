@@ -59,5 +59,8 @@ get count(*) from Products;
 print "Above is the product count.";
 
 export Products to csv("products.csv");
+
+drop price from Products;
+
 create forced unique bucket Products2 from csv("generated.csv");
 get * from Products2;

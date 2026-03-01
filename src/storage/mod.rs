@@ -644,6 +644,74 @@ impl BucketStore {
 
         Ok(())
     }
+
+    /// Drop a column from the schema efficiently.
+    ///
+    /// This removes the field from the schema and rewrites all records to exclude the column.
+    ///
+    /// The operation is performed efficiently by:
+    ///
+    ///  1. Removing the field from the schema
+    ///  2. Rewriting all records without the dropped column
+    ///  3. Rebuilding the index
+    pub fn drop_column(&mut self, column_name: &str) -> Result<()> {
+        let field_idx = self
+            .schema
+            .field_index(column_name)
+            .ok_or_else(|| ArcaneError::UnknownField(column_name.to_string()))?;
+        let records = self.scan_all()?;
+
+        self.schema.fields.remove(field_idx);
+
+        let mut hdr = [0u8; HEADER_SIZE as usize];
+
+        self.data_file.seek(SeekFrom::Start(0))?;
+        self.data_file.read_exact(&mut hdr)?;
+
+        let old_schema_off = u64::from_le_bytes(hdr[24..32].try_into().unwrap());
+        let new_schema_bytes = bincode::serialize(&self.schema)?;
+        let new_data_off = old_schema_off + new_schema_bytes.len() as u64;
+
+        self.data_file.seek(SeekFrom::Start(old_schema_off))?;
+        self.data_file.write_all(&new_schema_bytes)?;
+        self.write_pos = new_data_off;
+        self.data_file.seek(SeekFrom::Start(new_data_off))?;
+        self.index.clear();
+
+        for record in records {
+            let mut new_fields = record.fields;
+            new_fields.remove(field_idx);
+
+            let new_record = Record::new(new_fields);
+            let offset = self.write_pos;
+            let serialized: Vec<(usize, Value)> = new_record
+                .serialized_fields()
+                .into_iter()
+                .map(|(i, v)| (i, v.clone()))
+                .collect();
+            let field_bytes = bincode::serialize(&serialized)?;
+            let len = field_bytes.len() as u32;
+            let mut buf = Vec::with_capacity(13 + field_bytes.len());
+
+            buf.extend_from_slice(&new_record.hash.to_le_bytes());
+            buf.push(0x01);
+            buf.extend_from_slice(&len.to_le_bytes());
+            buf.extend_from_slice(&field_bytes);
+            self.data_file.write_all(&buf)?;
+            self.write_pos += buf.len() as u64;
+            self.index.push((new_record.hash, offset));
+        }
+
+        self.index.sort_unstable_by_key(|e| e.0);
+        self.data_file.set_len(self.write_pos)?;
+        hdr[32..40].copy_from_slice(&new_data_off.to_le_bytes());
+        self.data_file.seek(SeekFrom::Start(0))?;
+        self.data_file.write_all(&hdr)?;
+        self.flush_index()?;
+        self.data_file.flush()?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
