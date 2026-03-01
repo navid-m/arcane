@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 pub const MAGIC: &[u8; 8] = b"ARCANE01";
 pub const MAGIC_ENCRYPTED: &[u8; 8] = b"ARCENC01";
@@ -185,8 +186,11 @@ pub struct BucketStore {
     /// It's protected by the bucket-level RwLock on the BucketStore itself.
     index: Vec<(u64, u64)>,
 
-    /// The data file handle.
-    data_file: File,
+    /// The data file handle wrapped in Mutex for interior mutability.
+    /// This allows read_at/scan_all to take &self instead of &mut self,
+    /// enabling the engine to hold a read lock (RwLockReadGuard) during get()
+    /// instead of a write lock — allowing concurrent reads across threads.
+    data_file: Mutex<File>,
 
     /// Current write position in the data file.
     write_pos: u64,
@@ -233,7 +237,7 @@ impl BucketStore {
             schema,
             idx_path,
             index: Vec::new(),
-            data_file,
+            data_file: Mutex::new(data_file),
             write_pos: data_off,
             record_count: 0,
         })
@@ -279,7 +283,7 @@ impl BucketStore {
             schema,
             idx_path,
             index,
-            data_file,
+            data_file: Mutex::new(data_file),
             write_pos,
             record_count,
         };
@@ -310,16 +314,17 @@ impl BucketStore {
     }
 
     fn rebuild_index(&mut self, data_off: u64) -> Result<()> {
-        self.data_file.seek(SeekFrom::Start(data_off))?;
+        let mut f = self.data_file.lock().unwrap();
+        f.seek(SeekFrom::Start(data_off))?;
         let mut index = Vec::new();
         let mut pos = data_off;
-        let file_len = self.data_file.seek(SeekFrom::End(0))?;
-        self.data_file.seek(SeekFrom::Start(data_off))?;
+        let file_len = f.seek(SeekFrom::End(0))?;
+        f.seek(SeekFrom::Start(data_off))?;
 
         while pos < file_len {
             let mut rec_hdr = [0u8; 13];
 
-            if self.data_file.read_exact(&mut rec_hdr).is_err() {
+            if f.read_exact(&mut rec_hdr).is_err() {
                 break;
             }
 
@@ -330,9 +335,11 @@ impl BucketStore {
             if alive == 0x01 {
                 index.push((hash, pos));
             }
-            self.data_file.seek(SeekFrom::Current(len as i64))?;
+            f.seek(SeekFrom::Current(len as i64))?;
             pos += 13 + len;
         }
+        drop(f);
+
         index.sort_unstable_by_key(|e| e.0);
         self.index = index;
         self.flush_index()?;
@@ -363,8 +370,11 @@ impl BucketStore {
         buf.extend_from_slice(&len.to_le_bytes());
         buf.extend_from_slice(&field_bytes);
 
-        self.data_file.seek(SeekFrom::Start(offset))?;
-        self.data_file.write_all(&buf)?;
+        {
+            let mut f = self.data_file.lock().unwrap();
+            f.seek(SeekFrom::Start(offset))?;
+            f.write_all(&buf)?;
+        }
         self.write_pos += buf.len() as u64;
         self.record_count += 1;
 
@@ -381,17 +391,16 @@ impl BucketStore {
         entry[8..16].copy_from_slice(&offset.to_le_bytes());
         idx_file.write_all(&entry)?;
 
-        self.data_file.seek(SeekFrom::Start(8))?;
-        self.data_file.write_all(&self.record_count.to_le_bytes())?;
+        {
+            let mut f = self.data_file.lock().unwrap();
+            f.seek(SeekFrom::Start(8))?;
+            f.write_all(&self.record_count.to_le_bytes())?;
+        }
 
         Ok(record.hash)
     }
 
     /// Bulk insert multiple records efficiently.
-    ///
-    /// Returns the number of records inserted.
-    ///
-    /// This method batches I/O operations for performance on large datasets.
     pub fn bulk_insert(&mut self, records: Vec<Record>) -> Result<usize> {
         if records.is_empty() {
             return Ok(0);
@@ -436,8 +445,11 @@ impl BucketStore {
             offset += (13 + field_bytes.len()) as u64;
         }
 
-        self.data_file.seek(SeekFrom::Start(self.write_pos))?;
-        self.data_file.write_all(&data_buffer)?;
+        {
+            let mut f = self.data_file.lock().unwrap();
+            f.seek(SeekFrom::Start(self.write_pos))?;
+            f.write_all(&data_buffer)?;
+        }
         self.write_pos = offset;
         self.record_count += records.len() as u64;
 
@@ -473,8 +485,12 @@ impl BucketStore {
             .open(&self.idx_path)?;
 
         idx_file.write_all(&idx_buffer)?;
-        self.data_file.seek(SeekFrom::Start(8))?;
-        self.data_file.write_all(&self.record_count.to_le_bytes())?;
+
+        {
+            let mut f = self.data_file.lock().unwrap();
+            f.seek(SeekFrom::Start(8))?;
+            f.write_all(&self.record_count.to_le_bytes())?;
+        }
 
         Ok(records.len())
     }
@@ -484,8 +500,10 @@ impl BucketStore {
         match self.index.binary_search_by_key(&hash, |e| e.0) {
             Ok(idx) => {
                 let offset = self.index[idx].1;
-                self.data_file.seek(SeekFrom::Start(offset + 8))?;
-                self.data_file.write_all(&[0x00])?;
+                let mut f = self.data_file.lock().unwrap();
+                f.seek(SeekFrom::Start(offset + 8))?;
+                f.write_all(&[0x00])?;
+                drop(f);
                 self.index.remove(idx);
                 self.record_count = self.record_count.saturating_sub(1);
                 Ok(true)
@@ -499,19 +517,24 @@ impl BucketStore {
         self.index.clear();
         self.record_count = 0;
         let data_off = self.data_off()?;
-        self.data_file.set_len(data_off)?;
+        {
+            let mut f = self.data_file.lock().unwrap();
+            f.set_len(data_off)?;
+            f.seek(SeekFrom::Start(8))?;
+            f.write_all(&0u64.to_le_bytes())?;
+        }
         self.write_pos = data_off;
-        self.data_file.seek(SeekFrom::Start(8))?;
-        self.data_file.write_all(&0u64.to_le_bytes())?;
         self.flush_index()?;
         Ok(())
     }
 
     /// Read a record by its file offset.
-    pub fn read_at(&mut self, offset: u64) -> Result<Option<Record>> {
-        self.data_file.seek(SeekFrom::Start(offset))?;
+    /// Takes &self (not &mut self) thanks to Mutex interior mutability.
+    pub fn read_at(&self, offset: u64) -> Result<Option<Record>> {
+        let mut f = self.data_file.lock().unwrap();
+        f.seek(SeekFrom::Start(offset))?;
         let mut hdr = [0u8; 13];
-        if self.data_file.read_exact(&mut hdr).is_err() {
+        if f.read_exact(&mut hdr).is_err() {
             return Ok(None);
         }
         let hash = u64::from_le_bytes(hdr[0..8].try_into().unwrap());
@@ -523,14 +546,15 @@ impl BucketStore {
         }
 
         let mut field_bytes = vec![0u8; len];
-        self.data_file.read_exact(&mut field_bytes)?;
+        f.read_exact(&mut field_bytes)?;
         let sparse: Vec<(usize, Value)> = bincode::deserialize(&field_bytes)?;
         let fields = Record::reconstruct_fields(self.schema.fields.len(), sparse);
         Ok(Some(Record { hash, fields }))
     }
 
     /// Scan all live records.
-    pub fn scan_all(&mut self) -> Result<Vec<Record>> {
+    /// Takes &self (not &mut self) thanks to Mutex interior mutability.
+    pub fn scan_all(&self) -> Result<Vec<Record>> {
         let offsets: Vec<u64> = self.index.iter().map(|e| e.1).collect();
         let mut records = Vec::with_capacity(offsets.len());
         for off in offsets {
@@ -542,7 +566,7 @@ impl BucketStore {
     }
 
     /// Lookup by hash — O(log n).
-    pub fn get_by_hash(&mut self, hash: u64) -> Result<Option<Record>> {
+    pub fn get_by_hash(&self, hash: u64) -> Result<Option<Record>> {
         match self.index.binary_search_by_key(&hash, |e| e.0) {
             Ok(i) => self.read_at(self.index[i].1),
             Err(_) => Ok(None),
@@ -583,10 +607,11 @@ impl BucketStore {
         h
     }
 
-    pub fn data_off(&mut self) -> Result<u64> {
+    pub fn data_off(&self) -> Result<u64> {
         let mut hdr = [0u8; HEADER_SIZE as usize];
-        self.data_file.seek(SeekFrom::Start(0))?;
-        self.data_file.read_exact(&mut hdr)?;
+        let mut f = self.data_file.lock().unwrap();
+        f.seek(SeekFrom::Start(0))?;
+        f.read_exact(&mut hdr)?;
         Ok(u64::from_le_bytes(hdr[32..40].try_into().unwrap()))
     }
 
@@ -595,8 +620,12 @@ impl BucketStore {
         self.schema.fields.push(field);
         let new_schema_bytes = bincode::serialize(&self.schema)?;
         let mut hdr = [0u8; HEADER_SIZE as usize];
-        self.data_file.seek(SeekFrom::Start(0))?;
-        self.data_file.read_exact(&mut hdr)?;
+
+        {
+            let mut f = self.data_file.lock().unwrap();
+            f.seek(SeekFrom::Start(0))?;
+            f.read_exact(&mut hdr)?;
+        }
 
         let old_schema_off = u64::from_le_bytes(hdr[24..32].try_into().unwrap());
         let old_data_off = u64::from_le_bytes(hdr[32..40].try_into().unwrap());
@@ -607,39 +636,44 @@ impl BucketStore {
             let data_len = self.write_pos - old_data_off;
             let mut data_buf = vec![0u8; data_len as usize];
 
-            self.data_file.seek(SeekFrom::Start(old_data_off))?;
-            self.data_file.read_exact(&mut data_buf)?;
-            self.data_file.seek(SeekFrom::Start(old_schema_off))?;
-            self.data_file.write_all(&new_schema_bytes)?;
-            self.data_file.write_all(&data_buf)?;
+            {
+                let mut f = self.data_file.lock().unwrap();
+                f.seek(SeekFrom::Start(old_data_off))?;
+                f.read_exact(&mut data_buf)?;
+                f.seek(SeekFrom::Start(old_schema_off))?;
+                f.write_all(&new_schema_bytes)?;
+                f.write_all(&data_buf)?;
+            }
             self.write_pos = new_data_off + data_len;
 
             hdr[32..40].copy_from_slice(&new_data_off.to_le_bytes());
 
-            self.data_file.seek(SeekFrom::Start(0))?;
-            self.data_file.write_all(&hdr)?;
+            {
+                let mut f = self.data_file.lock().unwrap();
+                f.seek(SeekFrom::Start(0))?;
+                f.write_all(&hdr)?;
+            }
             self.rebuild_index(new_data_off)?;
         } else {
-            self.data_file.seek(SeekFrom::Start(old_schema_off))?;
-            self.data_file.write_all(&new_schema_bytes)?;
+            let mut f = self.data_file.lock().unwrap();
+            f.seek(SeekFrom::Start(old_schema_off))?;
+            f.write_all(&new_schema_bytes)?;
         }
 
-        self.data_file.flush()?;
+        self.data_file.lock().unwrap().flush()?;
         Ok(())
     }
 
     /// Flush all in-memory data to disk.
-    ///
-    /// This includes the index and ensures the data file is synced.
     pub fn flush(&mut self) -> Result<()> {
         self.flush_index()?;
-        self.data_file.flush()?;
+        self.data_file.lock().unwrap().flush()?;
 
         #[cfg(unix)]
         {
             use std::os::unix::io::AsRawFd;
             unsafe {
-                libc::fdatasync(self.data_file.as_raw_fd());
+                libc::fdatasync(self.data_file.lock().unwrap().as_raw_fd());
             }
         }
 
@@ -647,14 +681,6 @@ impl BucketStore {
     }
 
     /// Drop a column from the schema efficiently.
-    ///
-    /// This removes the field from the schema and rewrites all records to exclude the column.
-    ///
-    /// The operation is performed efficiently by:
-    ///
-    ///  1. Removing the field from the schema
-    ///  2. Rewriting all records without the dropped column
-    ///  3. Rebuilding the index
     pub fn drop_column(&mut self, column_name: &str) -> Result<()> {
         let field_idx = self
             .schema
@@ -665,18 +691,22 @@ impl BucketStore {
         self.schema.fields.remove(field_idx);
 
         let mut hdr = [0u8; HEADER_SIZE as usize];
-
-        self.data_file.seek(SeekFrom::Start(0))?;
-        self.data_file.read_exact(&mut hdr)?;
+        {
+            let mut f = self.data_file.lock().unwrap();
+            f.seek(SeekFrom::Start(0))?;
+            f.read_exact(&mut hdr)?;
+        }
 
         let old_schema_off = u64::from_le_bytes(hdr[24..32].try_into().unwrap());
         let new_schema_bytes = bincode::serialize(&self.schema)?;
         let new_data_off = old_schema_off + new_schema_bytes.len() as u64;
 
-        self.data_file.seek(SeekFrom::Start(old_schema_off))?;
-        self.data_file.write_all(&new_schema_bytes)?;
+        {
+            let mut f = self.data_file.lock().unwrap();
+            f.seek(SeekFrom::Start(old_schema_off))?;
+            f.write_all(&new_schema_bytes)?;
+        }
         self.write_pos = new_data_off;
-        self.data_file.seek(SeekFrom::Start(new_data_off))?;
         self.index.clear();
 
         for record in records {
@@ -698,18 +728,24 @@ impl BucketStore {
             buf.push(0x01);
             buf.extend_from_slice(&len.to_le_bytes());
             buf.extend_from_slice(&field_bytes);
-            self.data_file.write_all(&buf)?;
+
+            self.data_file.lock().unwrap().write_all(&buf)?;
             self.write_pos += buf.len() as u64;
             self.index.push((new_record.hash, offset));
         }
 
         self.index.sort_unstable_by_key(|e| e.0);
-        self.data_file.set_len(self.write_pos)?;
-        hdr[32..40].copy_from_slice(&new_data_off.to_le_bytes());
-        self.data_file.seek(SeekFrom::Start(0))?;
-        self.data_file.write_all(&hdr)?;
+
+        {
+            let mut f = self.data_file.lock().unwrap();
+            f.set_len(self.write_pos)?;
+            hdr[32..40].copy_from_slice(&new_data_off.to_le_bytes());
+            f.seek(SeekFrom::Start(0))?;
+            f.write_all(&hdr)?;
+        }
+
         self.flush_index()?;
-        self.data_file.flush()?;
+        self.data_file.lock().unwrap().flush()?;
 
         Ok(())
     }
