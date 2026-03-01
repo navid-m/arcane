@@ -871,7 +871,7 @@ impl Database {
             .get(&bucket)
             .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
 
-        let mut store = handle.write();
+        let store = handle.write();
         let schema = store.schema.clone();
         let mut records: Vec<Record> = store.scan_all()?;
 
@@ -1201,7 +1201,7 @@ impl Database {
             .get(&bucket)
             .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
 
-        let mut store = handle.write();
+        let store = handle.write();
         let schema = store.schema.clone();
         let records: Vec<Record> = store.scan_all()?;
         let mut csv_content = String::new();
