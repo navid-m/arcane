@@ -2,7 +2,7 @@
 //!
 //! Tool for managing database users and authentication.
 
-use arcane::auth::AuthManager;
+use arcane::authentication::AuthManager;
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;

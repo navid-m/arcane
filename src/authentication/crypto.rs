@@ -32,13 +32,13 @@ pub fn encrypt(data: &[u8], password: &str) -> Result<Vec<u8>> {
         .map_err(|e| ArcaneError::Other(format!("Cipher creation failed: {}", e)))?;
     let mut nonce_bytes = [0u8; NONCE_SIZE];
     OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
 
+    let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
         .encrypt(nonce, data)
         .map_err(|e| ArcaneError::Other(format!("Encryption failed: {}", e)))?;
-
     let mut result = Vec::with_capacity(SALT_SIZE + NONCE_SIZE + ciphertext.len());
+
     result.extend_from_slice(&salt);
     result.extend_from_slice(&nonce_bytes);
     result.extend_from_slice(&ciphertext);

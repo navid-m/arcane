@@ -1,4 +1,4 @@
-use crate::auth::{parse_connection_string, AuthManager};
+use crate::authentication::{parse_connection_string, AuthManager};
 use crate::engine::Database;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

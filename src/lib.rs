@@ -2,9 +2,7 @@
 //!
 //! License: GPL-3.0-only
 
-pub mod auth;
-pub mod crypto;
-pub mod encryption_manager;
+pub mod authentication;
 pub mod engine;
 pub mod error;
 pub mod meta;
