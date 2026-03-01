@@ -24,7 +24,6 @@ serde = { version = "1", features = ["derive"] }
 parking_lot = "0.12"
 dashmap = "5"
 crossbeam-channel = "0.5"
-memmap2 = "0.9"
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
