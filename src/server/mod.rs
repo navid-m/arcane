@@ -1,33 +1,43 @@
-use crate::authentication::{parse_connection_string, AuthManager};
+use crate::authentication::{decrypt_database, parse_connection_string, AuthManager};
 use crate::engine::Database;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 /// Run the server.
 pub async fn run(bind: &str, db_path: &str) -> std::io::Result<()> {
-    let db = Database::open(db_path).expect("Failed to open database");
-    let auth_manager =
-        AuthManager::load(std::path::Path::new(db_path)).expect("Failed to load auth manager");
+    let auth_manager = AuthManager::load(Path::new(db_path)).expect("Failed to load auth manager");
     let auth_enabled = auth_manager.has_users();
 
+    let db_opt = if !auth_enabled {
+        Some(Database::open(db_path).expect("Failed to open database"))
+    } else {
+        None
+    };
+
     if auth_enabled {
-        tracing::info!("Arcane listening on {} (authentication enabled)", bind);
+        tracing::info!(
+            "Arcane listening on {} (authentication enabled - database will open after first authentication)",
+            bind
+        );
     } else {
         tracing::info!("Arcane listening on {} (authentication disabled)", bind);
     }
 
     let listener = TcpListener::bind(bind).await?;
+    let db_path_arc = Arc::new(db_path.to_string());
 
     loop {
         let (stream, addr) = listener.accept().await?;
         tracing::debug!("Connection from {}", addr);
-        let db = db.clone();
+        let db_clone = db_opt.clone();
+        let db_path_clone = db_path_arc.clone();
         let auth_manager =
-            AuthManager::load(std::path::Path::new(db_path)).expect("Failed to load auth manager");
+            AuthManager::load(Path::new(db_path)).expect("Failed to load auth manager");
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, db, auth_manager).await {
+            if let Err(e) = handle_connection(stream, db_clone, db_path_clone, auth_manager).await {
                 tracing::warn!("Connection error: {}", e);
             }
         });
@@ -37,13 +47,15 @@ pub async fn run(bind: &str, db_path: &str) -> std::io::Result<()> {
 /// Handle some given connection asynchronously.
 async fn handle_connection(
     mut stream: TcpStream,
-    db: Arc<Database>,
+    db_opt: Option<Arc<Database>>,
+    db_path: Arc<String>,
     auth_manager: AuthManager,
 ) -> std::io::Result<()> {
     let (reader, mut writer) = stream.split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
     let mut authenticated = !auth_manager.has_users();
+    let mut db = db_opt;
 
     loop {
         line.clear();
@@ -60,12 +72,8 @@ async fn handle_connection(
                 match parse_connection_string(trimmed) {
                     Ok((username, password)) => match auth_manager.verify(&username, &password) {
                         Ok(true) => {
-                            let db_path_string = db.dir.to_string_lossy().to_string();
-                            let db_path_ref = std::path::Path::new(&db_path_string);
-
-                            if let Err(e) =
-                                crate::authentication::decrypt_database(db_path_ref, &password)
-                            {
+                            let db_path_ref = Path::new(db_path.as_str());
+                            if let Err(e) = decrypt_database(db_path_ref, &password) {
                                 writer
                                     .write_all(
                                         format!("ERR Failed to decrypt database: {}\n", e)
@@ -75,10 +83,21 @@ async fn handle_connection(
                                 writer.flush().await?;
                                 continue;
                             }
+                            let database = match Database::open(db_path_ref) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    writer
+                                        .write_all(
+                                            format!("ERR Failed to open database: {}\n", e)
+                                                .as_bytes(),
+                                        )
+                                        .await?;
+                                    writer.flush().await?;
+                                    continue;
+                                }
+                            };
 
-                            authenticated = true;
-
-                            if let Err(e) = db.set_encryption_key(password.clone()) {
+                            if let Err(e) = database.set_encryption_key(password.clone()) {
                                 writer
                                     .write_all(
                                         format!("ERR Failed to set encryption key: {}\n", e)
@@ -88,6 +107,9 @@ async fn handle_connection(
                                 writer.flush().await?;
                                 continue;
                             }
+
+                            db = Some(database);
+                            authenticated = true;
 
                             writer
                                 .write_all(b"OK\nAuthenticated successfully\nEND\n")
@@ -117,15 +139,19 @@ async fn handle_connection(
             continue;
         }
 
-        match db.execute(trimmed) {
-            Ok(result) => {
-                writer
-                    .write_all(format!("OK\n{}END\n", result).as_bytes())
-                    .await?;
+        if let Some(ref database) = db {
+            match database.execute(trimmed) {
+                Ok(result) => {
+                    writer
+                        .write_all(format!("OK\n{}END\n", result).as_bytes())
+                        .await?;
+                }
+                Err(e) => {
+                    writer.write_all(format!("ERR {}\n", e).as_bytes()).await?;
+                }
             }
-            Err(e) => {
-                writer.write_all(format!("ERR {}\n", e).as_bytes()).await?;
-            }
+        } else {
+            writer.write_all(b"ERR Database not initialized\n").await?;
         }
         writer.flush().await?;
     }
