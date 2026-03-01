@@ -312,7 +312,8 @@ impl Database {
                 csv_path,
                 unique,
                 forced,
-            } => self.create_bucket_from_csv(name, csv_path, unique, forced),
+                drop_columns,
+            } => self.create_bucket_from_csv(name, csv_path, unique, forced, drop_columns),
             Statement::Insert { bucket, values } => self.insert(bucket, values),
             Statement::BatchInsert { bucket, rows } => self.batch_insert(bucket, rows),
             Statement::Bulk { statements } => self.bulk(statements),
@@ -368,6 +369,16 @@ impl Database {
                 std::fs::remove_file(self.dir.join(format!("{}.arc.idx", name)))?;
             } else {
                 return Err(ArcaneError::BucketExists(name));
+            }
+        }
+
+        let mut seen_names = std::collections::HashSet::new();
+        for field in &fields {
+            if !seen_names.insert(field.name.as_str()) {
+                return Err(ArcaneError::Other(format!(
+                    "Duplicate column name '{}' in bucket schema",
+                    field.name
+                )));
             }
         }
 
@@ -1207,6 +1218,7 @@ impl Database {
         csv_path: String,
         unique: bool,
         forced: bool,
+        drop_columns: Option<Vec<usize>>,
     ) -> Result<QueryResult> {
         let csv_content = std::fs::read_to_string(&csv_path).map_err(|e| {
             ArcaneError::Other(format!("Failed to read CSV file '{}': {}", csv_path, e))
@@ -1215,7 +1227,7 @@ impl Database {
         let header_line = lines
             .next()
             .ok_or_else(|| ArcaneError::Other(format!("CSV file '{}' is empty", csv_path)))?;
-        let field_names = Self::parse_csv_line(header_line);
+        let mut field_names = Self::parse_csv_line(header_line);
 
         if field_names.is_empty() {
             return Err(ArcaneError::Other(format!(
@@ -1224,10 +1236,77 @@ impl Database {
             )));
         }
 
+        let mut seen_names = std::collections::HashSet::new();
+        let mut duplicates = Vec::new();
+        for (idx, name) in field_names.iter().enumerate() {
+            if !seen_names.insert(name.as_str()) {
+                duplicates.push((idx, name.as_str()));
+            }
+        }
+
+        if !duplicates.is_empty() && drop_columns.is_none() {
+            let dup_list: Vec<String> = duplicates
+                .iter()
+                .map(|(idx, name)| format!("'{}' at index {}", name, idx))
+                .collect();
+            return Err(ArcaneError::Other(format!(
+                "CSV file '{}' has duplicate column names: {}. Use 'drop columns (...)' to specify which columns to drop by 0 based index.",
+                csv_path,
+                dup_list.join(", ")
+            )));
+        }
+
+        if let Some(ref indices) = drop_columns {
+            for &idx in indices {
+                if idx >= field_names.len() {
+                    return Err(ArcaneError::Other(format!(
+                        "Column index {} is out of bounds (CSV has {} columns)",
+                        idx,
+                        field_names.len()
+                    )));
+                }
+            }
+
+            let mut sorted_indices = indices.clone();
+            sorted_indices.sort_unstable();
+            sorted_indices.reverse();
+            for &idx in &sorted_indices {
+                field_names.remove(idx);
+            }
+
+            let mut seen_after_drop = std::collections::HashSet::new();
+            for name in &field_names {
+                if !seen_after_drop.insert(name.as_str()) {
+                    return Err(ArcaneError::Other(format!(
+                        "Duplicate column name '{}' still exists after dropping specified columns",
+                        name
+                    )));
+                }
+            }
+        }
+
+        if field_names.is_empty() {
+            return Err(ArcaneError::Other(format!(
+                "CSV file '{}' has no columns remaining after dropping",
+                csv_path
+            )));
+        }
+
         let first_data_line = lines.next().ok_or_else(|| {
             ArcaneError::Other(format!("CSV file '{}' has no data rows", csv_path))
         })?;
-        let first_row_values = Self::parse_csv_line(first_data_line);
+        let mut first_row_values = Self::parse_csv_line(first_data_line);
+
+        if let Some(ref indices) = drop_columns {
+            let mut sorted_indices = indices.clone();
+            sorted_indices.sort_unstable();
+            sorted_indices.reverse();
+            for &idx in &sorted_indices {
+                if idx < first_row_values.len() {
+                    first_row_values.remove(idx);
+                }
+            }
+        }
 
         if first_row_values.len() != field_names.len() {
             return Err(ArcaneError::Other(format!(
@@ -1280,7 +1359,18 @@ impl Database {
                 continue;
             }
 
-            let row_values = Self::parse_csv_line(line);
+            let mut row_values = Self::parse_csv_line(line);
+
+            if let Some(ref indices) = drop_columns {
+                let mut sorted_indices = indices.clone();
+                sorted_indices.sort_unstable();
+                sorted_indices.reverse();
+                for &idx in &sorted_indices {
+                    if idx < row_values.len() {
+                        row_values.remove(idx);
+                    }
+                }
+            }
 
             if row_values.len() != field_names.len() {
                 continue;

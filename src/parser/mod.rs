@@ -19,6 +19,7 @@ pub enum Statement {
         csv_path: String,
         unique: bool,
         forced: bool,
+        drop_columns: Option<Vec<usize>>,
     },
     Insert {
         bucket: String,
@@ -1066,11 +1067,68 @@ impl Parser {
                             }
                         };
                         self.expect_token(&Token::RParen)?;
+
+                        let drop_columns = if let Token::Ident(ref kw) = self.peek().clone() {
+                            if kw.to_lowercase() == "drop" {
+                                self.advance();
+                                let cols_kw = self.expect_ident()?;
+                                if cols_kw.to_lowercase() != "columns" {
+                                    return Err(ArcaneError::ParseError {
+                                        pos: self.pos,
+                                        msg: format!(
+                                            "Expected 'columns' after 'drop', got '{}'",
+                                            cols_kw
+                                        ),
+                                    });
+                                }
+                                self.expect_token(&Token::LParen)?;
+                                let mut indices = Vec::new();
+                                loop {
+                                    if self.peek() == &Token::RParen {
+                                        break;
+                                    }
+                                    match self.advance().clone() {
+                                        Token::IntLit(i) => {
+                                            if i < 0 {
+                                                return Err(ArcaneError::ParseError {
+                                                    pos: self.pos,
+                                                    msg: "Column indices must be non-negative"
+                                                        .into(),
+                                                });
+                                            }
+                                            indices.push(i as usize);
+                                        }
+                                        other => {
+                                            return Err(ArcaneError::ParseError {
+                                                pos: self.pos,
+                                                msg: format!(
+                                                    "Expected integer column index, got {:?}",
+                                                    other
+                                                ),
+                                            });
+                                        }
+                                    }
+                                    if self.peek() == &Token::Comma {
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                self.expect_token(&Token::RParen)?;
+                                Some(indices)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
                         return Ok(Statement::CreateBucketFromCsv {
                             name: bucket_name,
                             csv_path,
                             unique,
                             forced,
+                            drop_columns,
                         });
                     }
                 }
@@ -1950,11 +2008,13 @@ mod tests {
                 csv_path,
                 unique,
                 forced,
+                drop_columns,
             } => {
                 assert_eq!(name, "Users");
                 assert_eq!(csv_path, "users.csv");
                 assert!(!unique);
                 assert!(!forced);
+                assert!(drop_columns.is_none());
             }
             _ => panic!("Expected CreateBucketFromCsv"),
         }
@@ -1971,11 +2031,13 @@ mod tests {
                 csv_path,
                 unique,
                 forced,
+                drop_columns,
             } => {
                 assert_eq!(name, "Products");
                 assert_eq!(csv_path, "products.csv");
                 assert!(unique);
                 assert!(forced);
+                assert!(drop_columns.is_none());
             }
             _ => panic!("Expected CreateBucketFromCsv"),
         }
