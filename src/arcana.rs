@@ -1,4 +1,8 @@
-//! Arcane User Management CLI
+//! Arcane - Copyright (C) Navid Momtahen 2026
+//!
+//! License: GPL-3.0-only
+//!
+//! Arcana is a user management CLI for ArcaneDB
 //!
 //! Tool for managing database users and authentication.
 

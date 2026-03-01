@@ -1,6 +1,6 @@
-//! Arcane - Copyright (C) Navid Momtahen 2026
+//! Error types for Arcane.
 //!
-//! License: GPL-3.0-only
+//! This module defines custom error types for use throughout the Arcane codebase.
 
 use thiserror::Error;
 
