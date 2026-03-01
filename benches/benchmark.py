@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-This is for benchmarking and testing the server, since there's no easy way to do that without mocks.
+This is for benchmarking and testing the server.
 """
 
 import socket
@@ -35,7 +35,7 @@ def benchmark_inserts(n, threads=1):
             t0 = time.perf_counter()
             send_command(f'insert into bench (id: {i}, data: "test_{i}")')
             times.append(time.perf_counter() - t0)
-        send_command('commit!')
+        send_command("commit!")
         results.extend(times)
 
     results = []
