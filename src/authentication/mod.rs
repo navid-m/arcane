@@ -2,6 +2,10 @@
 //!
 //! Manages user credentials and authentication state.
 
+pub mod crypto;
+pub mod db_encryption;
+pub mod encryption_manager;
+
 use crate::error::{ArcaneError, Result};
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -12,6 +16,10 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
+
+pub use crypto::{decrypt, encrypt};
+pub use db_encryption::{decrypt_database, encrypt_database, is_database_encrypted};
+pub use encryption_manager::EncryptionManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {

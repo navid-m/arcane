@@ -2,6 +2,7 @@
 //!
 //! This module provides the core functionality for managing and interacting with the storage engine.
 
+use crate::authentication::EncryptionManager;
 use crate::error::{ArcaneError, Result};
 use crate::parser::{self, Filter, Projection, Statement};
 use crate::storage::{BucketStore, FieldDef, Record, Schema, Value};
@@ -249,10 +250,11 @@ impl fmt::Display for QueryResult {
 type BucketHandle = Arc<RwLock<BucketStore>>;
 
 pub struct Database {
-    dir: PathBuf,
+    pub(crate) dir: PathBuf,
     buckets: DashMap<String, BucketHandle>,
     wal: Arc<Wal>,
     config: Config,
+    encryption: Arc<EncryptionManager>,
 }
 
 impl Database {
@@ -263,6 +265,8 @@ impl Database {
     pub fn open_with_config<P: AsRef<Path>>(dir: P, config: Config) -> Result<Arc<Self>> {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
+
+        let encryption = Arc::new(EncryptionManager::new(&dir));
         let wal = Arc::new(Wal::open_with_config(
             &dir,
             config.no_sync,
@@ -290,6 +294,7 @@ impl Database {
             buckets,
             wal,
             config,
+            encryption,
         });
 
         if !db.config.no_wal {
@@ -1593,6 +1598,74 @@ impl Database {
     /// Get schema for a bucket.
     pub fn schema(&self, bucket: &str) -> Option<Schema> {
         self.buckets.get(bucket).map(|h| h.read().schema.clone())
+    }
+
+    /// Set encryption key after authentication
+    pub fn set_encryption_key(&self, password: String) -> Result<()> {
+        self.encryption.set_key(password)
+    }
+
+    /// Check if encryption is enabled
+    pub fn is_encryption_enabled(&self) -> bool {
+        self.encryption.is_enabled()
+    }
+
+    /// Encrypt all database files (call before shutdown or after checkpoint)
+    pub fn encrypt_files(&self) -> Result<()> {
+        if !self.encryption.is_enabled() {
+            return Ok(());
+        }
+
+        let password = match self.encryption.get_key()? {
+            Some(pwd) => pwd,
+            None => {
+                tracing::debug!(
+                    "Skipping encryption: no key set (files should already be encrypted)"
+                );
+                return Ok(());
+            }
+        };
+
+        crate::authentication::encrypt_database(&self.dir, &password)?;
+        Ok(())
+    }
+
+    /// Shutdown the database gracefully (close files, flush, and encrypt)
+    pub fn shutdown(&self) -> Result<()> {
+        let bucket_names: Vec<String> = self
+            .buckets
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for name in &bucket_names {
+            if let Some(handle) = self.buckets.get(name) {
+                let mut store = handle.write();
+                store.flush()?;
+            }
+        }
+
+        for name in bucket_names {
+            self.buckets.remove(&name);
+        }
+
+        if self.encryption.is_enabled() {
+            self.encrypt_files()?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for Database {
+    fn drop(&mut self) {
+        if self.encryption.is_enabled() {
+            if let Err(e) = self.encrypt_files() {
+                if let Ok(Some(_)) = self.encryption.get_key() {
+                    tracing::warn!("Failed to encrypt database on drop: {}", e);
+                }
+            }
+        }
     }
 }
 

@@ -1,9 +1,8 @@
-//! Encryption key management for ArcaneDB
+//! Encryption key management for Arcane.
 //!
 //! Manages encryption keys derived from user passwords.
 
-use crate::auth::AuthManager;
-use crate::crypto;
+use crate::authentication::{crypto, AuthManager};
 use crate::error::{ArcaneError, Result};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};

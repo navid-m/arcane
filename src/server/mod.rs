@@ -60,7 +60,35 @@ async fn handle_connection(
                 match parse_connection_string(trimmed) {
                     Ok((username, password)) => match auth_manager.verify(&username, &password) {
                         Ok(true) => {
+                            let db_path_string = db.dir.to_string_lossy().to_string();
+                            let db_path_ref = std::path::Path::new(&db_path_string);
+
+                            if let Err(e) =
+                                crate::authentication::decrypt_database(db_path_ref, &password)
+                            {
+                                writer
+                                    .write_all(
+                                        format!("ERR Failed to decrypt database: {}\n", e)
+                                            .as_bytes(),
+                                    )
+                                    .await?;
+                                writer.flush().await?;
+                                continue;
+                            }
+
                             authenticated = true;
+
+                            if let Err(e) = db.set_encryption_key(password.clone()) {
+                                writer
+                                    .write_all(
+                                        format!("ERR Failed to set encryption key: {}\n", e)
+                                            .as_bytes(),
+                                    )
+                                    .await?;
+                                writer.flush().await?;
+                                continue;
+                            }
+
                             writer
                                 .write_all(b"OK\nAuthenticated successfully\nEND\n")
                                 .await?;

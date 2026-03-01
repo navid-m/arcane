@@ -35,6 +35,17 @@ enum Command {
 
     /// List all users
     List,
+
+    /// Reset encryption (decrypt all files with old password, re-encrypt with new password)
+    ResetEncryption {
+        /// Old password
+        #[arg(long)]
+        old_password: Option<String>,
+
+        /// New password
+        #[arg(long)]
+        new_password: Option<String>,
+    },
 }
 
 fn main() {
@@ -91,6 +102,47 @@ fn main() {
                 }
                 println!("\nAuthentication is enabled.");
             }
+        }
+        Command::ResetEncryption {
+            old_password,
+            new_password,
+        } => {
+            if !auth_manager.has_users() {
+                eprintln!("Error: No users configured. Add a user first.");
+                std::process::exit(1);
+            }
+
+            let old_pwd = if let Some(pwd) = old_password {
+                pwd
+            } else {
+                print!("Enter OLD password: ");
+                io::stdout().flush().unwrap();
+                rpassword::read_password().expect("Failed to read password")
+            };
+
+            let new_pwd = if let Some(pwd) = new_password {
+                pwd
+            } else {
+                print!("Enter NEW password: ");
+                io::stdout().flush().unwrap();
+                rpassword::read_password().expect("Failed to read password")
+            };
+
+            println!("Decrypting database with old password...");
+            if let Err(e) = arcane::authentication::decrypt_database(&db_path, &old_pwd) {
+                eprintln!("Error: Failed to decrypt with old password: {}", e);
+                std::process::exit(1);
+            }
+
+            println!("Re-encrypting database with new password...");
+            if let Err(e) = arcane::authentication::encrypt_database(&db_path, &new_pwd) {
+                eprintln!("Error: Failed to encrypt with new password: {}", e);
+                std::process::exit(1);
+            }
+
+            println!(
+                "Encryption reset successfully.\nDatabase is now encrypted with the new password."
+            );
         }
     }
 }

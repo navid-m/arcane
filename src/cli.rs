@@ -2,11 +2,12 @@
 //!
 //! License: GPL-3.0-only
 
+use arcane::authentication::{decrypt_database, AuthManager};
 use arcane::engine::Database;
 use arcane::meta::{get_version, show_version};
 use clap::{Parser, Subcommand};
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
@@ -49,7 +50,56 @@ fn main() {
         return;
     }
 
+    let db_path = Path::new(&args.data);
+    let auth_manager = AuthManager::load(db_path).expect("Failed to load auth manager");
+    let password_opt = if auth_manager.has_users() {
+        println!("Authentication required for this database.");
+        print!("Username: ");
+        io::stdout().flush().unwrap();
+        let mut username = String::new();
+        io::stdin()
+            .read_line(&mut username)
+            .expect("Failed to read username");
+        let username = username.trim();
+
+        print!("Password: ");
+        io::stdout().flush().unwrap();
+        let password = rpassword::read_password().expect("Failed to read password");
+
+        match auth_manager.verify(username, &password) {
+            Ok(true) => {
+                println!("Authentication successful.\n");
+
+                if let Err(e) = decrypt_database(db_path, &password) {
+                    eprintln!("Error: Failed to decrypt database: {}", e);
+                    eprintln!("This may indicate:");
+                    eprintln!("  - Wrong password");
+                    eprintln!("  - Corrupted database files");
+                    eprintln!("  - Database was encrypted with a different password");
+                    std::process::exit(1);
+                }
+
+                Some(password)
+            }
+            Ok(false) => {
+                eprintln!("Error: Authentication failed - invalid credentials");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("Error: Authentication error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
     let db = Database::open(&args.data).expect("Failed to open database");
+
+    if let Some(password) = password_opt {
+        db.set_encryption_key(password)
+            .expect("Failed to set encryption key");
+    }
 
     match args.command.unwrap_or(Cmd::Repl) {
         Cmd::Run { file } => {
@@ -67,9 +117,21 @@ fn main() {
                     Err(e) => eprintln!("Error: {}", e),
                 }
             }
+
+            if let Err(e) = db.shutdown() {
+                eprintln!("Warning: Failed to flush database: {}", e);
+            }
+
+            drop(db);
         }
         Cmd::Repl => {
-            repl(db);
+            repl(db.clone());
+
+            if let Err(e) = db.shutdown() {
+                eprintln!("Warning: Failed to flush database: {}", e);
+            }
+
+            drop(db);
         }
     }
 }
