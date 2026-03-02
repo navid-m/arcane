@@ -121,7 +121,6 @@ impl EncryptionManager {
         file.read_to_end(&mut data)?;
 
         let decrypted = self.decrypt_if_enabled(&data)?;
-
         let mut file = OpenOptions::new()
             .write(true)
             .truncate(true)
