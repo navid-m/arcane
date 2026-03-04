@@ -1,4 +1,4 @@
-# Run with: arcc run examples/demo.arc
+# Run with: arcc run examples/demo.aql
 
 create forced unique bucket Names (first_name: string, last_name: string);
 
