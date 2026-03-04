@@ -1020,7 +1020,7 @@ impl Database {
                             }
                             min_val
                                 .map(|v| v.to_string())
-                                .unwrap_or_else(|| "NULL".to_string())
+                                .unwrap_or_else(|| "__null__".to_string())
                         }
                         AggregateFunc::Max(_) => {
                             let mut max_val: Option<Value> = None;
@@ -1042,7 +1042,7 @@ impl Database {
                             }
                             max_val
                                 .map(|v| v.to_string())
-                                .unwrap_or_else(|| "NULL".to_string())
+                                .unwrap_or_else(|| "__null__".to_string())
                         }
                         AggregateFunc::Median(_) => {
                             let mut numeric_values: Vec<f64> = Vec::new();
@@ -1060,7 +1060,7 @@ impl Database {
                                 }
                             }
                             if numeric_values.is_empty() {
-                                "NULL".to_string()
+                                "__null__".to_string()
                             } else {
                                 numeric_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
                                 let len = numeric_values.len();
@@ -1088,7 +1088,7 @@ impl Database {
                                 }
                             }
                             if numeric_values.is_empty() {
-                                "NULL".to_string()
+                                "__null__".to_string()
                             } else {
                                 let mean = numeric_values.iter().sum::<f64>()
                                     / numeric_values.len() as f64;
