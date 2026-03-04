@@ -103,8 +103,8 @@ fn main() {
 
     match args.command.unwrap_or(Cmd::Repl) {
         Cmd::Run { file } => {
-            if file.extension().map_or(false, |e| e != "arc") {
-                eprintln!("Warning: expected .arc file extension");
+            if file.extension().map_or(false, |e| e != "aql") {
+                eprintln!("Warning: expected .aql file extension");
             }
             let src = std::fs::read_to_string(&file).unwrap_or_else(|e| {
                 eprintln!("Cannot read file: {}", e);
