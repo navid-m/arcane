@@ -2,6 +2,7 @@
 //!
 //! License: GPL-3.0-only
 
+pub mod analytics;
 pub mod authentication;
 pub mod engine;
 pub mod error;
@@ -11,5 +12,6 @@ pub mod server;
 pub mod storage;
 pub mod wal;
 
+pub use analytics::AnalyticsEngine;
 pub use engine::{Config, Database, QueryResult};
 pub use error::ArcaneError;

@@ -2,9 +2,10 @@
 //!
 //! This module provides the core functionality for managing and interacting with the storage engine.
 
+use crate::analytics::{extract_numeric, AnalyticsEngine};
 use crate::authentication::EncryptionManager;
 use crate::error::{ArcaneError, Result};
-use crate::parser::{self, Filter, Projection, Statement};
+use crate::parser::{self, AnalysisType, Filter, Projection, Statement};
 use crate::storage::{BucketStore, FieldDef, Record, Schema, Value};
 use crate::wal::{Wal, WalInsert};
 use dashmap::DashMap;
@@ -95,6 +96,10 @@ pub enum QueryResult {
     ColumnDropped {
         bucket: String,
         column: String,
+    },
+    Analytics {
+        analysis: String,
+        results: Vec<(String, String)>,
     },
 }
 
@@ -242,6 +247,21 @@ impl fmt::Display for QueryResult {
             QueryResult::ColumnDropped { bucket, column } => {
                 writeln!(f, "Dropped column '{}' from bucket '{}'.", column, bucket)
             }
+            QueryResult::Analytics { analysis, results } => {
+                writeln!(f, "\nAnalytics: {}", analysis)?;
+                writeln!(f)?;
+
+                if results.is_empty() {
+                    writeln!(f, "No results.")
+                } else {
+                    let max_key_len = results.iter().map(|(k, _)| k.len()).max().unwrap_or(10);
+
+                    for (key, value) in results {
+                        writeln!(f, "{:<width$} : {}", key, value, width = max_key_len)?;
+                    }
+                    Ok(())
+                }
+            }
         }
     }
 }
@@ -255,6 +275,7 @@ pub struct Database {
     wal: Arc<Wal>,
     config: Config,
     encryption: Arc<EncryptionManager>,
+    analytics: Arc<AnalyticsEngine>,
 }
 
 impl Database {
@@ -295,6 +316,7 @@ impl Database {
             wal,
             config,
             encryption,
+            analytics: Arc::new(AnalyticsEngine::new()),
         });
 
         if !db.config.no_wal {
@@ -354,6 +376,11 @@ impl Database {
             }
             Statement::ShowBuckets => self.show_buckets(),
             Statement::DropColumn { column, bucket } => self.drop_column(column, bucket),
+            Statement::Analyze {
+                bucket,
+                field,
+                analysis_type,
+            } => self.analyze(bucket, field, analysis_type),
         }
     }
 
@@ -857,6 +884,237 @@ impl Database {
         store.drop_column(&column)?;
 
         Ok(QueryResult::ColumnDropped { bucket, column })
+    }
+
+    fn analyze(
+        &self,
+        bucket: String,
+        field: String,
+        analysis_type: AnalysisType,
+    ) -> Result<QueryResult> {
+        let handle = self
+            .buckets
+            .get(&bucket)
+            .ok_or_else(|| ArcaneError::BucketNotFound(bucket.clone()))?;
+
+        let mut store = handle.write();
+        let schema = store.schema.clone();
+        let records: Vec<Record> = store.scan_all()?;
+
+        let field_idx = schema
+            .field_index(&field)
+            .ok_or_else(|| ArcaneError::UnknownField(field.clone()))?;
+
+        let mut results = Vec::new();
+
+        match analysis_type {
+            AnalysisType::Stream { window_size } => {
+                self.analytics.create_stream(bucket.clone(), window_size)?;
+
+                for record in &records {
+                    self.analytics.process_record(&bucket, record, &schema)?;
+                }
+
+                let metrics = self.analytics.get_metrics(&bucket, &field)?;
+
+                results.push(("Count".to_string(), metrics.count.to_string()));
+                results.push(("Sum".to_string(), format!("{:.4}", metrics.sum)));
+                results.push(("Mean".to_string(), format!("{:.4}", metrics.mean)));
+                results.push(("Min".to_string(), format!("{:.4}", metrics.min)));
+                results.push(("Max".to_string(), format!("{:.4}", metrics.max)));
+                results.push(("StdDev".to_string(), format!("{:.4}", metrics.stddev)));
+                results.push(("Variance".to_string(), format!("{:.4}", metrics.variance)));
+                results.push((
+                    "Moving Avg".to_string(),
+                    format!("{:.4}", metrics.moving_avg),
+                ));
+                results.push((
+                    "Rate of Change".to_string(),
+                    format!("{:.2}%", metrics.rate_of_change),
+                ));
+            }
+            AnalysisType::TimeSeries => {
+                let mut values = Vec::new();
+                for record in &records {
+                    if let Some(val) = record.fields.get(field_idx) {
+                        values.push(extract_numeric(val)?);
+                    }
+                }
+
+                self.analytics.create_timeseries(bucket.clone())?;
+                let ts_result = self.analytics.analyze_timeseries(&bucket, values)?;
+
+                results.push(("Trend".to_string(), format!("{:?}", ts_result.trend)));
+                if let Some(seasonality) = ts_result.seasonality {
+                    results.push(("Seasonality".to_string(), format!("{:.2}", seasonality)));
+                }
+                results.push((
+                    "Forecast (next 5)".to_string(),
+                    ts_result
+                        .forecast
+                        .iter()
+                        .map(|v| format!("{:.2}", v))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+                results.push((
+                    "Anomalies".to_string(),
+                    format!("{:?}", ts_result.anomalies),
+                ));
+                results.push((
+                    "Autocorrelation".to_string(),
+                    format!("{:.4}", ts_result.correlation),
+                ));
+            }
+            AnalysisType::Statistics => {
+                use crate::analytics::stats::StatisticalAnalyzer;
+
+                let mut values = Vec::new();
+                for record in &records {
+                    if let Some(val) = record.fields.get(field_idx) {
+                        values.push(extract_numeric(val)?);
+                    }
+                }
+
+                if values.is_empty() {
+                    return Err(ArcaneError::Other("No numeric values found".to_string()));
+                }
+
+                let mean = values.iter().sum::<f64>() / values.len() as f64;
+                let median = StatisticalAnalyzer::median(&values)?;
+                let mode = StatisticalAnalyzer::mode(&values)?;
+
+                results.push(("Count".to_string(), values.len().to_string()));
+                results.push(("Mean".to_string(), format!("{:.4}", mean)));
+                results.push(("Median".to_string(), format!("{:.4}", median)));
+                results.push(("Mode".to_string(), format!("{:.4}", mode)));
+
+                if values.len() >= 3 {
+                    let skewness = StatisticalAnalyzer::skewness(&values)?;
+                    results.push(("Skewness".to_string(), format!("{:.4}", skewness)));
+                }
+
+                if values.len() >= 4 {
+                    let kurtosis = StatisticalAnalyzer::kurtosis(&values)?;
+                    results.push(("Kurtosis".to_string(), format!("{:.4}", kurtosis)));
+                }
+
+                let p25 = StatisticalAnalyzer::percentile(&values, 25.0)?;
+                let p75 = StatisticalAnalyzer::percentile(&values, 75.0)?;
+                results.push(("25th Percentile".to_string(), format!("{:.4}", p25)));
+                results.push(("75th Percentile".to_string(), format!("{:.4}", p75)));
+
+                let distribution = StatisticalAnalyzer::detect_distribution(&values)?;
+                results.push(("Distribution".to_string(), format!("{:?}", distribution)));
+            }
+            AnalysisType::Correlation { ref other_field } => {
+                use crate::analytics::stats::StatisticalAnalyzer;
+
+                let other_idx = schema
+                    .field_index(other_field)
+                    .ok_or_else(|| ArcaneError::UnknownField(other_field.clone()))?;
+
+                let mut x_values = Vec::new();
+                let mut y_values = Vec::new();
+
+                for record in &records {
+                    if let (Some(x), Some(y)) =
+                        (record.fields.get(field_idx), record.fields.get(other_idx))
+                    {
+                        x_values.push(extract_numeric(x)?);
+                        y_values.push(extract_numeric(y)?);
+                    }
+                }
+
+                let correlation = StatisticalAnalyzer::correlation(&x_values, &y_values)?;
+                let covariance = StatisticalAnalyzer::covariance(&x_values, &y_values)?;
+
+                results.push(("Field 1".to_string(), field.clone()));
+                results.push(("Field 2".to_string(), other_field.clone()));
+                results.push(("Correlation".to_string(), format!("{:.4}", correlation)));
+                results.push(("Covariance".to_string(), format!("{:.4}", covariance)));
+                results.push(("Sample Size".to_string(), x_values.len().to_string()));
+            }
+            AnalysisType::Percentile { p } => {
+                use crate::analytics::stats::StatisticalAnalyzer;
+
+                let mut values = Vec::new();
+                for record in &records {
+                    if let Some(val) = record.fields.get(field_idx) {
+                        values.push(extract_numeric(val)?);
+                    }
+                }
+
+                let percentile = StatisticalAnalyzer::percentile(&values, p)?;
+                results.push(("Percentile".to_string(), format!("{:.2}", p)));
+                results.push(("Value".to_string(), format!("{:.4}", percentile)));
+            }
+            AnalysisType::WindowFunc {
+                ref function,
+                window,
+            } => {
+                use crate::analytics::window::{WindowFunction, WindowProcessor};
+
+                let mut values = Vec::new();
+                for record in &records {
+                    if let Some(val) = record.fields.get(field_idx) {
+                        values.push(extract_numeric(val)?);
+                    }
+                }
+
+                let window_func = match function.to_lowercase().as_str() {
+                    "row_number" => WindowFunction::RowNumber,
+                    "rank" => WindowFunction::Rank,
+                    "dense_rank" => WindowFunction::DenseRank,
+                    "percent_rank" => WindowFunction::PercentRank,
+                    "lag" => WindowFunction::Lag(1),
+                    "lead" => WindowFunction::Lead(1),
+                    "first_value" => WindowFunction::FirstValue,
+                    "last_value" => WindowFunction::LastValue,
+                    _ => {
+                        return Err(ArcaneError::Other(format!(
+                            "Unknown window function: {}",
+                            function
+                        )))
+                    }
+                };
+
+                let processor = WindowProcessor::new(window_func);
+                let result_values = processor.apply(&values)?;
+
+                results.push(("Function".to_string(), function.clone()));
+                results.push(("Window Size".to_string(), window.to_string()));
+                results.push((
+                    "Results".to_string(),
+                    result_values
+                        .iter()
+                        .take(10)
+                        .map(|v| format!("{:.2}", v))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+                if result_values.len() > 10 {
+                    results.push((
+                        "...".to_string(),
+                        format!("({} more values)", result_values.len() - 10),
+                    ));
+                }
+            }
+        }
+
+        let analysis_name = match &analysis_type {
+            AnalysisType::Stream { .. } => "Stream Analytics",
+            AnalysisType::TimeSeries => "Time Series Analysis",
+            AnalysisType::Statistics => "Statistical Analysis",
+            AnalysisType::Correlation { .. } => "Correlation Analysis",
+            AnalysisType::Percentile { .. } => "Percentile Analysis",
+            AnalysisType::WindowFunc { .. } => "Window Function",
+        };
+
+        Ok(QueryResult::Analytics {
+            analysis: format!("{} on {}.{}", analysis_name, bucket, field),
+            results,
+        })
     }
 
     fn get(

@@ -67,6 +67,11 @@ pub enum Statement {
         column: String,
         bucket: String,
     },
+    Analyze {
+        bucket: String,
+        field: String,
+        analysis_type: AnalysisType,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +93,16 @@ pub enum AggregateFunc {
     Median(String),
     Stddev(String),
     Count(Option<String>),
+}
+
+#[derive(Debug, Clone)]
+pub enum AnalysisType {
+    Stream { window_size: usize },
+    TimeSeries,
+    Statistics,
+    Correlation { other_field: String },
+    Percentile { p: f64 },
+    WindowFunc { function: String, window: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1004,6 +1019,88 @@ impl Parser {
         }
     }
 
+    fn parse_analyze(&mut self) -> Result<Statement> {
+        let bucket = self.expect_ident()?;
+        let field = self.expect_ident()?;
+        
+        let analysis_type = if let Token::Ident(ref kw) = self.peek().clone() {
+            match kw.to_lowercase().as_str() {
+                "stream" => {
+                    self.advance();
+                    self.expect_token(&Token::LParen)?;
+                    let window_size = match self.advance().clone() {
+                        Token::IntLit(i) => i as usize,
+                        other => {
+                            return Err(ArcaneError::ParseError {
+                                pos: self.pos,
+                                msg: format!("Expected window size, got {:?}", other),
+                            })
+                        }
+                    };
+                    self.expect_token(&Token::RParen)?;
+                    AnalysisType::Stream { window_size }
+                }
+                "timeseries" => {
+                    self.advance();
+                    AnalysisType::TimeSeries
+                }
+                "stats" | "statistics" => {
+                    self.advance();
+                    AnalysisType::Statistics
+                }
+                "correlation" => {
+                    self.advance();
+                    self.expect_token(&Token::LParen)?;
+                    let other_field = self.expect_ident()?;
+                    self.expect_token(&Token::RParen)?;
+                    AnalysisType::Correlation { other_field }
+                }
+                "percentile" => {
+                    self.advance();
+                    self.expect_token(&Token::LParen)?;
+                    let p = match self.advance().clone() {
+                        Token::IntLit(i) => i as f64,
+                        Token::FloatLit(f) => f,
+                        other => {
+                            return Err(ArcaneError::ParseError {
+                                pos: self.pos,
+                                msg: format!("Expected percentile value, got {:?}", other),
+                            })
+                        }
+                    };
+                    self.expect_token(&Token::RParen)?;
+                    AnalysisType::Percentile { p }
+                }
+                "window" => {
+                    self.advance();
+                    self.expect_token(&Token::LParen)?;
+                    let function = self.expect_ident()?;
+                    self.expect_token(&Token::Comma)?;
+                    let window = match self.advance().clone() {
+                        Token::IntLit(i) => i as usize,
+                        other => {
+                            return Err(ArcaneError::ParseError {
+                                pos: self.pos,
+                                msg: format!("Expected window size, got {:?}", other),
+                            })
+                        }
+                    };
+                    self.expect_token(&Token::RParen)?;
+                    AnalysisType::WindowFunc { function, window }
+                }
+                _ => AnalysisType::Statistics,
+            }
+        } else {
+            AnalysisType::Statistics
+        };
+
+        Ok(Statement::Analyze {
+            bucket,
+            field,
+            analysis_type,
+        })
+    }
+
     fn parse_statement(&mut self) -> Result<Statement> {
         let kw = self.expect_ident()?;
         match kw.to_lowercase().as_str() {
@@ -1222,6 +1319,7 @@ impl Parser {
                 let bucket = self.expect_ident()?;
                 Ok(Statement::DropColumn { column, bucket })
             }
+            "analyze" => self.parse_analyze(),
             other => Err(ArcaneError::ParseError {
                 pos: self.pos,
                 msg: format!("Unknown statement keyword: '{}'", other),

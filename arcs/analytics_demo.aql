@@ -1,0 +1,133 @@
+print "Creating Sales bucket with sample data...";
+create forced bucket Sales (
+    product: string,
+    price: float,
+    quantity: int,
+    revenue: float,
+    timestamp: int
+);
+
+insert into Sales ("Laptop", 999.99, 2, 1999.98, 1);
+insert into Sales ("Mouse", 29.99, 5, 149.95, 2);
+insert into Sales ("Keyboard", 79.99, 3, 239.97, 3);
+insert into Sales ("Monitor", 299.99, 1, 299.99, 4);
+insert into Sales ("Laptop", 999.99, 1, 999.99, 5);
+insert into Sales ("Mouse", 29.99, 10, 299.90, 6);
+insert into Sales ("Keyboard", 79.99, 2, 159.98, 7);
+insert into Sales ("Monitor", 299.99, 2, 599.98, 8);
+insert into Sales ("Laptop", 999.99, 3, 2999.97, 9);
+insert into Sales ("Mouse", 29.99, 8, 239.92, 10);
+insert into Sales ("Keyboard", 79.99, 1, 79.99, 11);
+insert into Sales ("Monitor", 299.99, 1, 299.99, 12);
+insert into Sales ("Laptop", 999.99, 2, 1999.98, 13);
+insert into Sales ("Mouse", 29.99, 15, 449.85, 14);
+insert into Sales ("Keyboard", 79.99, 4, 319.96, 15);
+
+get * from Sales;
+
+print "Real-time metrics with sliding window of 10 records";
+analyze Sales revenue stream(10);
+print "";
+
+print "Trend detection, forecasting, and anomaly detection";
+analyze Sales revenue timeseries;
+print "";
+
+print "Comprehensive statistics for price field";
+analyze Sales price statistics;
+print "";
+
+print "Statistics for quantity field";
+analyze Sales quantity statistics;
+print "";
+
+print "Relationship between quantity and revenue";
+analyze Sales quantity correlation(revenue);
+print "";
+
+print "90th percentile of revenue";
+analyze Sales revenue percentile(90);
+print "";
+
+print "50th percentile (median) of price";
+analyze Sales price percentile(50);
+print "";
+
+print "Row numbers for revenue";
+analyze Sales revenue window(row_number, 15);
+print "";
+
+print "Ranking revenues (highest first)";
+analyze Sales revenue window(rank, 15);
+print "";
+
+print "Dense ranking (no gaps)";
+analyze Sales revenue window(dense_rank, 15);
+print "";
+
+print "Percent rank (0 to 1)";
+analyze Sales revenue window(percent_rank, 15);
+print "";
+
+create forced bucket Metrics (
+    metric_name: string,
+    value: float,
+    hour: int
+);
+
+insert into Metrics ("cpu_usage", 45.2, 0);
+insert into Metrics ("cpu_usage", 48.1, 1);
+insert into Metrics ("cpu_usage", 52.3, 2);
+insert into Metrics ("cpu_usage", 55.7, 3);
+insert into Metrics ("cpu_usage", 58.9, 4);
+insert into Metrics ("cpu_usage", 62.1, 5);
+insert into Metrics ("cpu_usage", 65.4, 6);
+insert into Metrics ("cpu_usage", 68.2, 7);
+insert into Metrics ("cpu_usage", 71.5, 8);
+insert into Metrics ("cpu_usage", 74.8, 9);
+insert into Metrics ("cpu_usage", 78.1, 10);
+insert into Metrics ("cpu_usage", 81.3, 11);
+insert into Metrics ("cpu_usage", 84.6, 12);
+insert into Metrics ("cpu_usage", 87.9, 13);
+insert into Metrics ("cpu_usage", 91.2, 14);
+insert into Metrics ("cpu_usage", 94.5, 15);
+insert into Metrics ("cpu_usage", 97.8, 16);
+insert into Metrics ("cpu_usage", 95.2, 17);
+insert into Metrics ("cpu_usage", 92.1, 18);
+insert into Metrics ("cpu_usage", 88.7, 19);
+insert into Metrics ("cpu_usage", 85.3, 20);
+insert into Metrics ("cpu_usage", 81.9, 21);
+insert into Metrics ("cpu_usage", 78.5, 22);
+insert into Metrics ("cpu_usage", 75.1, 23);
+
+analyze Metrics value timeseries;
+print "";
+
+analyze Metrics value stream(24);
+print "";
+
+analyze Metrics value statistics;
+print "";
+
+create forced bucket Marketing (
+    ad_spend: float,
+    revenue: float,
+    impressions: int
+);
+
+insert into Marketing (1000.0, 5000.0, 10000);
+insert into Marketing (1500.0, 7500.0, 15000);
+insert into Marketing (2000.0, 10000.0, 20000);
+insert into Marketing (2500.0, 12500.0, 25000);
+insert into Marketing (3000.0, 15000.0, 30000);
+insert into Marketing (3500.0, 17500.0, 35000);
+insert into Marketing (4000.0, 20000.0, 40000);
+insert into Marketing (4500.0, 22500.0, 45000);
+insert into Marketing (5000.0, 25000.0, 50000);
+insert into Marketing (5500.0, 27500.0, 55000);
+
+analyze Marketing ad_spend correlation(revenue);
+print "";
+
+analyze Marketing ad_spend correlation(impressions);
+print "";
