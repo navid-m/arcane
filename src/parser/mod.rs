@@ -60,7 +60,9 @@ pub enum Statement {
     Print {
         message: String,
     },
+    Begin,
     Commit,
+    Rollback,
     Checkpoint,
     ShowBuckets,
     DropColumn {
@@ -1294,7 +1296,9 @@ impl Parser {
                 };
                 Ok(Statement::Print { message })
             }
+            "begin!" => Ok(Statement::Begin),
             "commit!" => Ok(Statement::Commit),
+            "rollback!" => Ok(Statement::Rollback),
             "checkpoint!" => Ok(Statement::Checkpoint),
             "show" => {
                 let next = self.expect_ident()?;

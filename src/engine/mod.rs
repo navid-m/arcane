@@ -9,7 +9,7 @@ use crate::parser::{self, AnalysisType, Filter, Projection, Statement};
 use crate::storage::{BucketStore, FieldDef, Record, Schema, Value};
 use crate::wal::{Wal, WalInsert};
 use dashmap::DashMap;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -27,7 +27,9 @@ pub struct Config {
     pub no_wal: bool,
 
     /// Batch commits: only fsync every N commits (trades durability for performance).
-    /// 1 = fsync every commit (safest), higher = less frequent fsync.
+    ///
+    ///   * 1      = fsync every commit (safest)
+    ///   * higher = less frequent fsync.
     pub fsync_interval: u64,
 }
 
@@ -88,7 +90,9 @@ pub enum QueryResult {
     Printed {
         message: String,
     },
+    TransactionBegan,
     Committed,
+    RolledBack,
     Empty,
     BucketList {
         buckets: Vec<String>,
@@ -173,8 +177,14 @@ impl fmt::Display for QueryResult {
                 writeln!(f)?;
                 writeln!(f, "Total rows: {}", row_count)
             }
+            QueryResult::TransactionBegan => {
+                return Ok(());
+            }
             QueryResult::Committed => {
                 writeln!(f, "Committed.")
+            }
+            QueryResult::RolledBack => {
+                writeln!(f, "Rolled back.")
             }
             QueryResult::Exported {
                 bucket,
@@ -269,6 +279,12 @@ impl fmt::Display for QueryResult {
 /// It's a per-bucket RwLock
 type BucketHandle = Arc<RwLock<BucketStore>>;
 
+#[derive(Debug, Clone)]
+struct TransactionState {
+    /// Inserted records as per the following structure: (bucket_name, hash)
+    inserted_records: Vec<(String, u64)>,
+}
+
 pub struct Database {
     pub(crate) dir: PathBuf,
     buckets: DashMap<String, BucketHandle>,
@@ -276,6 +292,7 @@ pub struct Database {
     config: Config,
     encryption: Arc<EncryptionManager>,
     analytics: Arc<AnalyticsEngine>,
+    transaction_state: Arc<Mutex<Option<TransactionState>>>,
 }
 
 impl Database {
@@ -317,6 +334,7 @@ impl Database {
             config,
             encryption,
             analytics: Arc::new(AnalyticsEngine::new()),
+            transaction_state: Arc::new(Mutex::new(None)),
         });
 
         if !db.config.no_wal {
@@ -367,7 +385,9 @@ impl Database {
             } => self.get(bucket, projection, filter, order_by),
             Statement::Export { bucket, csv_path } => self.export_csv(bucket, csv_path),
             Statement::Print { message } => Ok(QueryResult::Printed { message }),
+            Statement::Begin => self.begin(),
             Statement::Commit => self.commit(),
+            Statement::Rollback => self.rollback(),
             Statement::Checkpoint => {
                 self.checkpoint()?;
                 Ok(QueryResult::Printed {
@@ -509,6 +529,13 @@ impl Database {
             store.insert(record)?
         };
 
+        {
+            let mut state = self.transaction_state.lock();
+            if let Some(tx_state) = state.as_mut() {
+                tx_state.inserted_records.push((bucket.clone(), hash));
+            }
+        }
+
         Ok(QueryResult::Inserted { bucket, hash })
     }
 
@@ -558,13 +585,24 @@ impl Database {
             records.push(record);
         }
 
-        let count = {
+        let (count, hashes) = {
             let mut store = handle.write();
+            let mut inserted_hashes = Vec::new();
             for record in records {
-                store.insert(record)?;
+                let hash = store.insert(record)?;
+                inserted_hashes.push(hash);
             }
-            rows.len()
+            (rows.len(), inserted_hashes)
         };
+
+        {
+            let mut state = self.transaction_state.lock();
+            if let Some(tx_state) = state.as_mut() {
+                for hash in hashes {
+                    tx_state.inserted_records.push((bucket.clone(), hash));
+                }
+            }
+        }
 
         if count >= 1000 {
             self.checkpoint()?;
@@ -1423,12 +1461,49 @@ impl Database {
         })
     }
 
+    fn begin(&self) -> Result<QueryResult> {
+        if !self.config.no_wal {
+            _ = self.wal.append_begin()?;
+            let mut state = self.transaction_state.lock();
+            *state = Some(TransactionState {
+                inserted_records: Vec::new(),
+            });
+        }
+        Ok(QueryResult::TransactionBegan)
+    }
+
     fn commit(&self) -> Result<QueryResult> {
         if !self.config.no_wal {
             self.wal.append_commit()?;
             self.wal.force_sync()?;
+            let mut state = self.transaction_state.lock();
+            *state = None;
         }
         Ok(QueryResult::Committed)
+    }
+
+    fn rollback(&self) -> Result<QueryResult> {
+        let records_to_remove = {
+            let mut state = self.transaction_state.lock();
+            if let Some(tx_state) = state.take() {
+                tx_state.inserted_records
+            } else {
+                Vec::new()
+            }
+        };
+
+        for (bucket_name, hash) in records_to_remove {
+            if let Some(handle) = self.buckets.get(&bucket_name) {
+                let mut store = handle.write();
+                let _ = store.delete(hash);
+            }
+        }
+
+        if !self.config.no_wal {
+            self.wal.append_rollback()?;
+        }
+
+        Ok(QueryResult::RolledBack)
     }
 
     /// Checkpoint: Flush all bucket data to disk and truncate WAL.
@@ -1823,28 +1898,44 @@ impl Database {
 
         tracing::info!("Replaying {} WAL entries for crash recovery", entries.len());
 
-        for entry in entries {
+        let mut skip_until_commit = false;
+
+        for entry in entries.iter() {
             match entry {
+                WalEntry::Begin => {
+                    skip_until_commit = true;
+                }
+                WalEntry::Rollback => {
+                    skip_until_commit = false;
+                }
+                WalEntry::Commit => {
+                    skip_until_commit = false;
+                }
                 WalEntry::CreateBucket(schema) => {
-                    let name = schema.bucket_name.clone();
-                    if !self.buckets.contains_key(&name) {
-                        let store = BucketStore::create(&self.dir, schema)?;
-                        self.buckets.insert(name, Arc::new(RwLock::new(store)));
+                    if !skip_until_commit {
+                        let name = schema.bucket_name.clone();
+                        if !self.buckets.contains_key(&name) {
+                            let store = BucketStore::create(&self.dir, schema.clone())?;
+                            self.buckets.insert(name, Arc::new(RwLock::new(store)));
+                        }
                     }
                 }
                 WalEntry::Insert(ins) => {
-                    if let Some(handle) = self.buckets.get(&ins.bucket) {
-                        let record = Record {
-                            hash: ins.hash,
-                            fields: ins.fields,
-                        };
-                        let mut store = handle.write();
-                        let _ = store.insert(record);
+                    if !skip_until_commit {
+                        if let Some(handle) = self.buckets.get(&ins.bucket) {
+                            let record = Record {
+                                hash: ins.hash,
+                                fields: ins.fields.clone(),
+                            };
+                            let mut store = handle.write();
+                            let _ = store.insert(record);
+                        }
                     }
                 }
-                WalEntry::Commit | WalEntry::Checkpoint => {}
+                WalEntry::Checkpoint => {}
             }
         }
+
         Ok(())
     }
 

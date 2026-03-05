@@ -5,6 +5,8 @@
 //!   0x02 = Insert        (payload = bincode WalInsert)
 //!   0x03 = Commit        (payload = empty)
 //!   0x04 = Checkpoint    (payload = empty)
+//!   0x05 = Begin         (payload = empty)
+//!   0x06 = Rollback      (payload = empty)
 //!
 //! On startup, any entries after the last Commit are replayed to recover.
 //! After enough entries accumulate, a Checkpoint is written and the WAL
@@ -29,6 +31,8 @@ pub enum EntryType {
     Insert = 0x02,
     Commit = 0x03,
     Checkpoint = 0x04,
+    Begin = 0x05,
+    Rollback = 0x06,
 }
 
 impl TryFrom<u8> for EntryType {
@@ -39,6 +43,8 @@ impl TryFrom<u8> for EntryType {
             0x02 => Ok(Self::Insert),
             0x03 => Ok(Self::Commit),
             0x04 => Ok(Self::Checkpoint),
+            0x05 => Ok(Self::Begin),
+            0x06 => Ok(Self::Rollback),
             _ => Err(ArcaneError::Wal(format!("Unknown entry type: {}", v))),
         }
     }
@@ -57,6 +63,8 @@ pub enum WalEntry {
     Insert(WalInsert),
     Commit,
     Checkpoint,
+    Begin,
+    Rollback,
 }
 
 /// Thread-safe WAL writer.
@@ -149,6 +157,14 @@ impl Wal {
         self.write_entry(EntryType::Checkpoint, &[])
     }
 
+    pub fn append_begin(&self) -> Result<u64> {
+        self.write_entry(EntryType::Begin, &[])
+    }
+
+    pub fn append_rollback(&self) -> Result<u64> {
+        self.write_entry(EntryType::Rollback, &[])
+    }
+
     fn write_entry(&self, ty: EntryType, payload: &[u8]) -> Result<u64> {
         let seq = self.seq.fetch_add(1, Ordering::AcqRel) + 1;
         let crc = Self::crc(seq, ty as u8, payload);
@@ -234,6 +250,8 @@ impl Wal {
                     last_checkpoint = entries.len();
                     WalEntry::Checkpoint
                 }
+                EntryType::Begin => WalEntry::Begin,
+                EntryType::Rollback => WalEntry::Rollback,
             };
             entries.push(entry);
         }
