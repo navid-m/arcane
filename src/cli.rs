@@ -29,9 +29,9 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Execute an .arc script file
+    /// Execute an .aql script file
     Run {
-        /// Path to the .arc script
+        /// Path to the .aql script
         file: PathBuf,
     },
     /// Start an interactive REPL
