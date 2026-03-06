@@ -14,10 +14,6 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser, Debug)]
 #[command(name = "arcc", about = "ArcaneDB Commandline Interface")]
 struct Args {
-    /// Database directory
-    #[arg(short, long, default_value = "./arcane_data")]
-    data: String,
-
     /// Command to execute
     #[command(subcommand)]
     command: Option<Cmd>,
@@ -33,9 +29,18 @@ enum Cmd {
     Run {
         /// Path to the .aql script
         file: PathBuf,
+
+        /// Database directory
+        #[arg(short, long, default_value = "./arcane_data")]
+        data: String,
     },
+
     /// Start an interactive REPL
-    Repl,
+    Repl {
+        /// Database directory
+        #[arg(short, long, default_value = "./arcane_data")]
+        data: String,
+    },
 }
 
 fn main() {
@@ -50,7 +55,15 @@ fn main() {
         return;
     }
 
-    let db_path = Path::new(&args.data);
+    let cmd = args.command.unwrap_or(Cmd::Repl {
+        data: "./arcane_data".to_string(),
+    });
+    let data_dir = match &cmd {
+        Cmd::Run { data, .. } => data,
+        Cmd::Repl { data } => data,
+    };
+
+    let db_path = Path::new(data_dir);
     let auth_manager = AuthManager::load(db_path).expect("Failed to load auth manager");
     let password_opt = if auth_manager.has_users() {
         println!("Authentication required for this database.");
@@ -94,15 +107,15 @@ fn main() {
         None
     };
 
-    let db = Database::open(&args.data).expect("Failed to open database");
+    let db = Database::open(data_dir).expect("Failed to open database");
 
     if let Some(password) = password_opt {
         db.set_encryption_key(password)
             .expect("Failed to set encryption key");
     }
 
-    match args.command.unwrap_or(Cmd::Repl) {
-        Cmd::Run { file } => {
+    match cmd {
+        Cmd::Run { file, .. } => {
             if file.extension().map_or(false, |e| e != "aql") {
                 eprintln!("Warning: expected .aql file extension");
             }
@@ -124,7 +137,7 @@ fn main() {
 
             drop(db);
         }
-        Cmd::Repl => {
+        Cmd::Repl { .. } => {
             repl(db.clone());
 
             if let Err(e) = db.shutdown() {
