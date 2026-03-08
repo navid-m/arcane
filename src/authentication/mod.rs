@@ -73,8 +73,7 @@ impl AuthManager {
         }
 
         let salt = SaltString::generate(&mut OsRng);
-        let argon2 = Argon2::default();
-        let password_hash = argon2
+        let password_hash = Argon2::default()
             .hash_password(password.as_bytes(), &salt)
             .map_err(|e| ArcaneError::Other(format!("Failed to hash password: {}", e)))?
             .to_string();
