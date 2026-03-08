@@ -2,8 +2,7 @@
 //!
 //! License: GPL-3.0-only
 //!
-//! Arcana is a user management CLI for ArcaneDB
-//!
+//! Arcana is a user management CLI for ArcaneDB.
 //! Tool for managing database users and authentication.
 
 use arcane::authentication::AuthManager;
