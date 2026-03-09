@@ -74,7 +74,6 @@ mod tests {
     fn test_encrypt_decrypt() {
         let data = b"Hello, ArcaneDB!";
         let password = "supersecret";
-
         let encrypted = encrypt(data, password).unwrap();
         assert_ne!(encrypted.as_slice(), data);
 
