@@ -635,11 +635,18 @@ impl BucketStore {
         self.flush_index()?;
         self.data_file.flush()?;
 
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         {
             use std::os::unix::io::AsRawFd;
             unsafe {
                 libc::fdatasync(self.data_file.as_raw_fd());
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe {
+                libc::fsync(self.data_file.as_raw_fd());
             }
         }
 

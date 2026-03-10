@@ -297,10 +297,17 @@ impl Wal {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn libc_fdatasync(fd: i32) {
     unsafe {
         libc::fdatasync(fd);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn libc_fdatasync(fd: i32) {
+    unsafe {
+        libc::fsync(fd);
     }
 }
 
